@@ -9,7 +9,7 @@ from typing import Annotated
 import gymnasium as gym
 import tyro
 
-from mujax.algorithms import GMZConfig, MZConfig, SMZConfig, algorithm_for
+from mujax.algorithms import GMZConfig, MZConfig, SampledMZConfig, SMZConfig, algorithm_for
 from mujax.checkpoint import CheckpointingConfig
 from mujax.experiment import ExperimentConfig, run_experiment
 from mujax.loggers import Logger, WandbLoggerFactory
@@ -18,12 +18,13 @@ AgentConfig = tyro.conf.OmitSubcommandPrefixes[
     Annotated[MZConfig, tyro.conf.subcommand("mz", prefix_name=False)]
     | Annotated[SMZConfig, tyro.conf.subcommand("smz", prefix_name=False)]
     | Annotated[GMZConfig, tyro.conf.subcommand("gmz", prefix_name=False)]
+    | Annotated[SampledMZConfig, tyro.conf.subcommand("sampled_mz", prefix_name=False)]
 ]
 
 
 @dataclasses.dataclass
 class Args:
-    """MuZero / Stochastic MuZero / Gumbel MuZero training on Gymnasium environments.
+    """MuZero / Stochastic MuZero / Gumbel MuZero / Sampled MuZero training on Gymnasium environments.
 
     Example: `mujax --env CartPole-v1 gmz --num-simulations 32`. lr_decay_steps and
     temperature_decay_steps are scaled relative to --num-steps.

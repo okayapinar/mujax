@@ -1,11 +1,11 @@
-"""MuZero, Stochastic MuZero and Gumbel MuZero, built on JAX, mctx and Gymnasium.
+"""MuZero, Stochastic MuZero, Gumbel MuZero and Sampled MuZero, built on JAX, mctx and Gymnasium.
 
 Module map:
     config.py      MuZeroConfig
     algorithm.py   Algorithm, SearchPolicy: the contract between the infrastructure and an algorithm
     algorithms/    ALGORITHMS registry and the algorithms
         muzero.py      shared math of the MuZero family: Support, network blocks, loss skeleton, PUCT exploration
-        mz.py / smz.py / gmz.py  algorithms (config, networks, search, loss); gmz reuses the mz model
+        mz.py / smz.py / gmz.py / sampled_mz.py  algorithms (config, networks, search, loss); gmz and sampled_mz reuse the mz model
     replay.py / reanalyze.py  flashbax replay and reanalyze iterator
     actor.py / learner.py / loop.py  environment interaction, gradient step, env loop
     observers.py / loggers.py / checkpoint.py  metrics, logging, orbax checkpoint
@@ -14,7 +14,7 @@ Module map:
 
 from mujax.actor import Actor
 from mujax.algorithm import Algorithm
-from mujax.algorithms import ALGORITHMS, GMZ, MZ, SMZ, GMZConfig, MZConfig, SMZConfig, algorithm_for
+from mujax.algorithms import ALGORITHMS, GMZ, MZ, SMZ, GMZConfig, MZConfig, SMZConfig, SampledMZ, SampledMZConfig, algorithm_for
 from mujax.checkpoint import CheckpointingConfig
 from mujax.config import MuZeroConfig
 from mujax.experiment import EvaluationConfig, ExperimentConfig, load_actor, run_experiment
@@ -44,6 +44,8 @@ __all__ = [
     "Learner",
     "MuZeroConfig",
     "SMZConfig",
+    "SampledMZ",
+    "SampledMZConfig",
     "algorithm_for",
     "load_actor",
     "make_environment_spec",

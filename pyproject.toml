@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mujax"
 dynamic = ["version"]
-description = "MuZero, Stochastic MuZero and Gumbel MuZero for Gymnasium environments, built on JAX and mctx."
+description = "MuZero, Stochastic MuZero, Gumbel MuZero and Sampled MuZero for Gymnasium environments, built on JAX and mctx."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]

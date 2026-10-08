@@ -1,10 +1,11 @@
 # mujax
 
-MuZero, Stochastic MuZero and Gumbel MuZero for [Gymnasium](https://gymnasium.farama.org/) environments, built on
+MuZero, Stochastic MuZero, Gumbel MuZero and Sampled MuZero for [Gymnasium](https://gymnasium.farama.org/) environments, built on
 JAX, [mctx](https://github.com/google-deepmind/mctx) and [flashbax](https://github.com/instadeepai/flashbax).
 
-- **Three algorithms, one pipeline**: `MZ` (MuZero with PUCT search), `SMZ` (Stochastic MuZero with afterstates and a
-  VQ chance codebook) and `GMZ` (Gumbel MuZero) share replay, reanalyze, actor, learner and checkpointing.
+- **Four algorithms, one pipeline**: `MZ` (MuZero with PUCT search), `SMZ` (Stochastic MuZero with afterstates and a
+  VQ chance codebook), `GMZ` (Gumbel MuZero) and `SampledMZ` (Sampled MuZero: PUCT over K actions sampled from the
+  policy at every node) share replay, reanalyze, actor, learner and checkpointing.
 - **Single process**: actor and evaluator run in threads on CPU, the learner runs on GPU when available.
 - **Reanalyze**: a fraction of every batch is re-searched with the latest parameters.
 - **Categorical value/reward** with HL-Gauss targets in symlog space.
@@ -31,7 +32,8 @@ pip install "mujax[wandb]"        # Weights & Biases logging
 mujax --env CartPole-v1 --num-steps 20000 --no-wandb gmz --num-simulations 16
 mujax --env Acrobot-v1 smz --batch-size 1024
 mujax --env CartPole-v1 mz --dirichlet-fraction 0.25
-mujax --help          # all options; `mujax mz --help`, `mujax smz --help`, `mujax gmz --help` for algorithm options
+mujax --env LunarLander-v3 sampled_mz --num-sampled-actions 3
+mujax --help          # all options; `mujax mz --help`, `mujax smz --help`, `mujax gmz --help`, `mujax sampled_mz --help` for algorithm options
 ```
 
 Checkpoints are written to `checkpoints/<algo>_<timestamp>/`.
@@ -62,7 +64,7 @@ run_experiment(
 actor, metadata = load_actor("checkpoints/cartpole")
 ```
 
-Environments must use `AutoresetMode.SAME_STEP`. See [`examples/`](https://github.com/okayapinar/mujax/tree/master/examples) for complete training and evaluation scripts.
+Environments must use `AutoresetMode.SAME_STEP`. See [`examples/`](https://github.com/okayapinar/mujax/tree/master/examples) for complete training (`cartpole.py`, `sampled_mz.py`) and evaluation (`evaluate.py`) scripts.
 
 ## Layout
 
@@ -72,7 +74,7 @@ Environments must use `AutoresetMode.SAME_STEP`. See [`examples/`](https://githu
 | `algorithm.py` | `Algorithm`, `SearchPolicy`: the contract between the infrastructure and an algorithm |
 | `algorithms/__init__.py` | `ALGORITHMS` registry, `algorithm_for` |
 | `algorithms/muzero.py` | shared math of the MuZero family: `Support`, network blocks, loss skeleton, PUCT exploration |
-| `algorithms/mz.py`, `algorithms/smz.py`, `algorithms/gmz.py` | algorithms: config, networks, search, loss; `gmz` reuses the `mz` model |
+| `algorithms/mz.py`, `algorithms/smz.py`, `algorithms/gmz.py`, `algorithms/sampled_mz.py` | algorithms: config, networks, search, loss; `gmz` and `sampled_mz` reuse the `mz` model |
 | `replay.py`, `reanalyze.py` | flashbax replay and reanalyze iterator |
 | `actor.py`, `learner.py`, `loop.py` | environment interaction, gradient step, environment loop |
 | `observers.py`, `loggers.py`, `checkpoint.py` | metrics, logging, Orbax checkpoints |
@@ -90,6 +92,7 @@ uv run pytest
 - Schrittwieser et al., *Mastering Atari, Go, Chess and Shogi by Planning with a Learned Model* (2020)
 - Antonoglou et al., *Planning in Stochastic Environments with a Learned Model* (2022)
 - Danihelka et al., *Policy Improvement by Planning with Gumbel* (2022)
+- Hubert et al., *Learning and Planning in Complex Action Spaces* (2021)
 - Hoffman et al., *Acme: A Research Framework for Distributed Reinforcement Learning* (2020)
 
 ## License
