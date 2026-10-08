@@ -55,6 +55,8 @@ class ExperimentConfig:
         environment_factory: seed -> `gym.vector.VectorEnv` for training.
         eval_environment_factory: seed -> `gym.vector.VectorEnv` for evaluation (usually
             num_envs=1); if None, there is no evaluator.
+        seed: Seeds the network init, search and replay sampling, and the first env reset (train sub-envs get
+            `seed + i`, the evaluator `seed + num_envs + i`).
         observer_factories: Each env loop (actor and evaluator) gets its own instance.
         writer: CLU `MetricWriter` (e.g. `create_writer(...)`); learner, actor and evaluator write to it under
             `learner/`, `actor/`, `evaluator/`. Closed at the end of `run_experiment`. None: only the progress bar.
@@ -180,9 +182,11 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
         return None if writer is None else Logger(label, writer)
 
     environment = experiment.environment_factory(experiment.seed)
-    eval_environment = experiment.eval_environment_factory(experiment.seed + 1) if experiment.eval_environment_factory else None
     spec = make_environment_spec(environment)
     num_envs = int(environment.num_envs)
+    # Train sub-envs use seeds seed..seed+num_envs-1; the evaluator starts right after so no initial state repeats.
+    eval_seed = experiment.seed + num_envs
+    eval_environment = experiment.eval_environment_factory(eval_seed) if experiment.eval_environment_factory else None
     graphdef, params = algorithm.init(spec, config, learner_key)
     if writer is not None:
         hparams = {"algo": algorithm.name, "seed": experiment.seed, **config.to_dict(), **(experiment.hparams or {})}
@@ -192,6 +196,7 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
         spec,
         num_envs=num_envs,
         max_size=config.max_replay_size,
+        min_size=config.min_replay_size,
         sample_batch_size=config.batch_size,
         sequence_length=config.sequence_length,
         period=config.replay_period,
@@ -250,6 +255,7 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
         observers=make_observers(),
         env_hook=experiment.train_env_hook,
         stop_event=stop_event,
+        seed=experiment.seed,
     )
     workers = [_Worker("actor", train_loop.run, stop_event)]
 
@@ -274,6 +280,7 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
             episode_callback=ScoreTracker(experiment.evaluation, eval_actor, stop_event, best_checkpointer),
             env_hook=experiment.eval_env_hook,
             stop_event=stop_event,
+            seed=eval_seed,
         )
         workers.append(_Worker("evaluator", eval_loop.run, stop_event))
 

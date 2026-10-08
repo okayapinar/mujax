@@ -29,6 +29,7 @@ class MuZeroConfig:
 
     # Replay / reanalyze
     max_replay_size: int | None = None  # If None, computed from free RAM
+    min_replay_size: int = 10_000  # Transitions (all envs) in replay before the learner starts; capped at the buffer size
     replay_period: int = 1
     reanalyze_ratio: float = 0.5
 

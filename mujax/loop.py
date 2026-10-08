@@ -47,6 +47,8 @@ class EnvironmentLoop:
             (e.g. a data window).
         episode_callback: Each episode result (counts included) is passed to this before being written to the logger;
             it may add new keys to the result.
+        seed: passed to the first `env.reset`; sub-env i gets `seed + i`, later episodes continue from those RNGs.
+            None: the env seeds itself (not reproducible).
     """
 
     def __init__(
@@ -61,6 +63,7 @@ class EnvironmentLoop:
         episode_callback: EpisodeCallback | None = None,
         env_hook: EnvHook | None = None,
         stop_event: threading.Event | None = None,
+        seed: int | None = None,
     ) -> None:
         if environment.metadata.get("autoreset_mode") != gym.vector.AutoresetMode.SAME_STEP:
             raise ValueError(
@@ -77,6 +80,7 @@ class EnvironmentLoop:
         self._env_hook = env_hook
         self._stop_event = stop_event or threading.Event()
         self._num_envs = int(environment.num_envs)
+        self._seed = seed
 
     def run(self, num_episodes: int | None = None) -> None:
         """Runs until `stop_event` is set or `num_episodes` episodes in total have finished."""
@@ -87,7 +91,8 @@ class EnvironmentLoop:
             episodes += int(done.sum())
 
     def _start(self) -> np.ndarray:
-        observation, info = self._env.reset()
+        observation, info = self._env.reset(seed=self._seed)
+        self._seed = None
         self._actor.observe_first(observation, info)
         for observer in self._observers:
             observer.observe_first(self._env, self._num_envs)

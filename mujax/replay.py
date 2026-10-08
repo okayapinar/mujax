@@ -45,6 +45,9 @@ def max_size_from_memory(spec: EnvironmentSpec, num_envs: int) -> int:
 class Buffer:
     """Each env is one time-axis row. Steps are written in chunks of `sequence_length`.
 
+    `sample` returns None until `min_size` transitions (summed over envs) have been added, so the learner
+    doesn't start by overfitting a handful of early steps.
+
     `add` is called from the actor thread, `sample` from the learner thread. `add` donates the old state
     (to avoid copying the whole buffer), so every place that reads the state holds the lock. Fill level
     is tracked with a Python counter, so `size` / `can_sample` do not sync with the device.
@@ -59,6 +62,7 @@ class Buffer:
         sample_batch_size: int,
         sequence_length: int,
         period: int = 1,
+        min_size: int = 0,
     ):
         if not max_size or max_size <= 0:
             max_size = max_size_from_memory(spec, num_envs)
@@ -80,6 +84,8 @@ class Buffer:
         self._chunk_size = sequence_length
         self._chunk: list[Transition] = []
         self._added_length = 0  # total steps written to each env row
+        # Per-row steps needed before sampling; at least one chunk (flashbax can_sample), at most a full buffer.
+        self._min_length = min(max(-(-min_size // num_envs), sequence_length), self._max_length)
 
     def add(self, transition: Transition) -> None:
         """Adds a single step shaped (num_envs, ...); writes to the buffer once a chunk is full."""
@@ -95,8 +101,7 @@ class Buffer:
     def sample(self, key: jax.Array):
         """Returns None if no sample is available (buffer not yet full enough)."""
         with self._lock:
-            # flashbax can_sample: is_full | current_index >= min_length_time_axis (= sequence_length).
-            if self._added_length < self._chunk_size:
+            if self._added_length < self._min_length:
                 return None
             return self._sample(self._state, key)
 

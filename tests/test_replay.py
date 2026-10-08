@@ -52,3 +52,26 @@ def test_environment_spec_rejects_continuous_actions():
     with pytest.raises(ValueError):
         make_environment_spec(env)
     env.close()
+
+
+def test_sample_waits_for_min_size():
+    import jax
+
+    # min_size=25 over 2 envs -> 13 steps per row -> sampling starts after the third chunk of 5 steps.
+    buffer = Buffer(SPEC, num_envs=2, max_size=64, sample_batch_size=4, sequence_length=5, min_size=25)
+    key = jax.random.PRNGKey(0)
+    for _ in range(10):
+        buffer.add(transition(2))
+    assert buffer.size == 20 and buffer.sample(key) is None
+    for _ in range(5):
+        buffer.add(transition(2))
+    assert buffer.sample(key) is not None
+
+
+def test_min_size_is_capped_at_max_size():
+    import jax
+
+    buffer = Buffer(SPEC, num_envs=2, max_size=20, sample_batch_size=4, sequence_length=5, min_size=1000)
+    for _ in range(10):
+        buffer.add(transition(2))
+    assert buffer.sample(jax.random.PRNGKey(0)) is not None

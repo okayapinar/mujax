@@ -18,6 +18,7 @@ TINY = {
     "num_bins": 21,
     "batch_size": 8,
     "max_replay_size": 2048,
+    "min_replay_size": 0,
     "lr_warmup_steps": 1,
     "lr_decay_steps": 10,
     "representation_layer_sizes": (16,),
