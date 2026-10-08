@@ -68,16 +68,16 @@ Environments must use `AutoresetMode.SAME_STEP`. See [`examples/`](https://githu
 
 ### Logging
 
-Metrics go through [CLU](https://github.com/google/CommonLoopUtils) metric writers. `create_writer` combines TensorBoard, console and Weights & Biases into one asynchronous writer; learner, actor and evaluator metrics are written under `learner/`, `actor/` and `evaluator/` with `learner_steps` as the step:
+`create_writer` sends metrics to the terminal and, optionally, Weights & Biases; learner, actor and evaluator metrics are written under `learner/`, `actor/` and `evaluator/` with `learner_steps` as the step:
 
 ```python
-writer = create_writer("runs/cartpole", console=True, wandb_project="mujax")
+writer = create_writer(console=True, wandb_project="mujax")
 ExperimentConfig(..., writer=writer)
 ```
 
-Any `clu.metric_writers.MetricWriter` works. Without a writer only the progress bar is shown.
+Any object with `write(step, scalars)`, `write_config(config)` and `close()` works as a writer (`mujax.Writer`). Without a writer only the progress bar is shown.
 
-On the command line TensorBoard logs go to `runs/<run_name>` (`--log-dir`, `--no-tensorboard`); add `--console` for terminal output and `--wandb` (`--wandb-project`, `--wandb-api-key`) for W&B.
+On the command line metrics are printed to the terminal (`--no-console` turns it off); add `--wandb` (`--wandb-project`, `--wandb-api-key`) for W&B.
 
 ## Layout
 
@@ -90,7 +90,7 @@ On the command line TensorBoard logs go to `runs/<run_name>` (`--log-dir`, `--no
 | `algorithms/mz.py`, `algorithms/smz.py`, `algorithms/gmz.py`, `algorithms/sampled_mz.py` | algorithms: config, networks, search, loss; `gmz` and `sampled_mz` reuse the `mz` model |
 | `replay.py`, `reanalyze.py` | flashbax replay and reanalyze iterator |
 | `actor.py`, `learner.py`, `loop.py` | environment interaction, gradient step, environment loop |
-| `observers.py`, `loggers.py`, `checkpoint.py` | metrics, CLU metric writers, Orbax checkpoints |
+| `observers.py`, `loggers.py`, `checkpoint.py` | metrics, terminal and W&B writers, Orbax checkpoints |
 | `experiment.py` | `ExperimentConfig`, `run_experiment`, `load_actor` |
 
 ## Development

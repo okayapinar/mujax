@@ -1,31 +1,39 @@
-"""Metric logging on CLU `MetricWriter`s.
+"""Metric logging to the terminal and Weights & Biases.
 
-    writer = create_writer("runs/cartpole", console=True, wandb_project="mujax")   # TensorBoard + terminal + W&B
+    writer = create_writer(console=True, wandb_project="mujax")
     ExperimentConfig(..., writer=writer)
 
 Learner, actor and evaluator each get a `Logger`: it writes their metrics as `<label>/<key>` scalars, at most once per
-`LOG_EVERY[label]` seconds, with the shared `learner_steps` count as the step.
+`LOG_EVERY[label]` seconds, with the shared `learner_steps` count as the step. Anything with the `Writer` methods can
+be passed as the writer.
 """
 
 from __future__ import annotations
 
-import os
+import threading
 import time
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import Any, Protocol
 
 import numpy as np
-from clu import metric_writers
 from tqdm.auto import tqdm
 
 STEP_KEY = "learner_steps"
 LOG_EVERY = {"learner": 10.0, "actor": 1.0, "evaluator": 0.0}  # seconds between writes
 
 
+class Writer(Protocol):
+    def write(self, step: int, scalars: Mapping[str, float]) -> None: ...
+
+    def write_config(self, config: Mapping[str, Any]) -> None: ...
+
+    def close(self) -> None: ...
+
+
 class Logger:
     """Writes one component's metrics (learner, actor or evaluator) to a shared writer."""
 
-    def __init__(self, label: str, writer: metric_writers.MetricWriter) -> None:
+    def __init__(self, label: str, writer: Writer) -> None:
         self._label = label
         self._writer = writer
         self._every = LOG_EVERY.get(label, 1.0)
@@ -38,48 +46,23 @@ class Logger:
         self._last = now
         scalars = to_scalars(data)
         step = int(scalars.pop(STEP_KEY, 0))
-        self._writer.write_scalars(step, {f"{self._label}/{key}": value for key, value in scalars.items()})
+        self._writer.write(step, {f"{self._label}/{key}": value for key, value in scalars.items()})
 
 
-class ScalarWriter(metric_writers.MetricWriter):
-    """Base for writers that only handle scalars and hparams; the other data types are ignored."""
-
-    def write_summaries(self, step, values, metadata=None):
-        pass
-
-    def write_images(self, step, images):
-        pass
-
-    def write_videos(self, step, videos):
-        pass
-
-    def write_audios(self, step, audios, *, sample_rate):
-        pass
-
-    def write_texts(self, step, texts):
-        pass
-
-    def write_histograms(self, step, arrays, num_buckets=None):
-        pass
-
-    def flush(self):
-        pass
-
-    def close(self):
-        pass
-
-
-class ConsoleWriter(ScalarWriter):
+class ConsoleWriter:
     """Prints to the terminal with `tqdm.write`, so the progress bar stays intact."""
 
-    def write_scalars(self, step: int, scalars: Mapping[str, float]) -> None:
+    def write(self, step: int, scalars: Mapping[str, float]) -> None:
         tqdm.write(f"[{step}] " + ", ".join(f"{key}={value:.6g}" for key, value in sorted(scalars.items())))
 
-    def write_hparams(self, hparams: Mapping[str, Any]) -> None:
-        tqdm.write(f"[hparams] {dict(hparams)}")
+    def write_config(self, config: Mapping[str, Any]) -> None:
+        tqdm.write(f"[config] {dict(config)}")
+
+    def close(self) -> None:
+        pass
 
 
-class WandbWriter(ScalarWriter):
+class WandbWriter:
     """Opens a W&B run; `close` finishes it.
 
     The step is logged as the `learner_steps` metric instead of W&B's own step: learner, actor and evaluator write
@@ -94,37 +77,53 @@ class WandbWriter(ScalarWriter):
         self._run.define_metric(STEP_KEY)
         self._run.define_metric("*", step_metric=STEP_KEY)
 
-    def write_scalars(self, step: int, scalars: Mapping[str, float]) -> None:
+    def write(self, step: int, scalars: Mapping[str, float]) -> None:
         self._run.log({**scalars, STEP_KEY: step})
 
-    def write_hparams(self, hparams: Mapping[str, Any]) -> None:
-        self._run.config.update(dict(hparams))
+    def write_config(self, config: Mapping[str, Any]) -> None:
+        self._run.config.update(dict(config))
 
     def close(self) -> None:
         self._run.finish()
 
 
+class MultiWriter:
+    """Passes every call to each writer; the lock keeps lines from the actor, evaluator and learner threads apart."""
+
+    def __init__(self, writers: Sequence[Writer]) -> None:
+        self._writers = list(writers)
+        self._lock = threading.Lock()
+
+    def write(self, step: int, scalars: Mapping[str, float]) -> None:
+        with self._lock:
+            for writer in self._writers:
+                writer.write(step, scalars)
+
+    def write_config(self, config: Mapping[str, Any]) -> None:
+        with self._lock:
+            for writer in self._writers:
+                writer.write_config(config)
+
+    def close(self) -> None:
+        with self._lock:
+            for writer in self._writers:
+                writer.close()
+
+
 def create_writer(
-    log_dir: str | None = None,
     *,
-    console: bool = False,
+    console: bool = True,
     wandb_project: str | None = None,
     wandb_name: str | None = None,
     wandb_api_key: str | None = None,
-) -> metric_writers.MetricWriter:
-    """Combines TensorBoard (if `log_dir`), terminal (if `console`) and W&B (if `wandb_project`) into one writer.
-
-    Writes run in background threads, so training doesn't wait on disk or network.
-    """
-    writers: list[metric_writers.MetricWriter] = []
-    if log_dir is not None:
-        os.makedirs(log_dir, exist_ok=True)
-        writers.append(metric_writers.SummaryWriter(log_dir))
+) -> MultiWriter:
+    """Terminal (if `console`) and W&B (if `wandb_project`) behind one writer."""
+    writers: list[Writer] = []
     if console:
         writers.append(ConsoleWriter())
     if wandb_project is not None:
         writers.append(WandbWriter(wandb_project, name=wandb_name, api_key=wandb_api_key))
-    return metric_writers.AsyncMultiWriter(writers)
+    return MultiWriter(writers)
 
 
 def to_scalars(data: Mapping[str, Any]) -> dict[str, float]:
@@ -135,11 +134,6 @@ def to_scalars(data: Mapping[str, Any]) -> dict[str, float]:
         if value.ndim == 0 and np.issubdtype(value.dtype, np.number):
             result[key] = float(value)
     return result
-
-
-def to_hparams(data: Mapping[str, Any]) -> dict[str, bool | int | float | str]:
-    """Turns values TensorBoard's hparams can't take (None, lists, ...) into strings."""
-    return {key: value if isinstance(value, (bool, int, float, str)) else str(value) for key, value in data.items()}
 
 
 def import_wandb():

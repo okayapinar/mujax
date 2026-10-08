@@ -35,9 +35,7 @@ class Args:
     num_steps: int = 100_000  # Total learner steps
     seed: int = 0
     checkpoint_dir: str = "checkpoints"
-    log_dir: str = "runs"  # TensorBoard logs go to `<log_dir>/<run_name>`
-    tensorboard: bool = True
-    console: bool = False  # Also print metrics to the terminal
+    console: bool = True  # Print metrics to the terminal
     wandb: bool = False  # Also log to W&B
     wandb_project: str = "mujax"
     wandb_api_key: str | None = None  # If unset, wandb's own credentials (`wandb login`) are used
@@ -55,7 +53,6 @@ def main(argv: list[str] | None = None) -> None:
 
     run_name = f"{algo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     writer = create_writer(
-        os.path.join(args.log_dir, run_name) if args.tensorboard else None,
         console=args.console,
         wandb_project=args.wandb_project if args.wandb else None,
         wandb_name=run_name,

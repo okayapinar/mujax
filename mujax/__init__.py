@@ -8,7 +8,7 @@ Module map:
         mz.py / smz.py / gmz.py / sampled_mz.py  algorithms (config, networks, search, loss); gmz and sampled_mz reuse the mz model
     replay.py / reanalyze.py  flashbax replay and reanalyze iterator
     actor.py / learner.py / loop.py  environment interaction, gradient step, env loop
-    observers.py / loggers.py / checkpoint.py  metrics, CLU metric writers (TensorBoard/console/W&B), orbax checkpoint
+    observers.py / loggers.py / checkpoint.py  metrics, terminal/W&B writers, orbax checkpoint
     experiment.py  ExperimentConfig, run_experiment, load_actor
 """
 
@@ -19,7 +19,7 @@ from mujax.checkpoint import CheckpointingConfig
 from mujax.config import MuZeroConfig
 from mujax.experiment import EvaluationConfig, ExperimentConfig, load_actor, run_experiment
 from mujax.learner import Learner
-from mujax.loggers import Logger, WandbWriter, create_writer
+from mujax.loggers import ConsoleWriter, Logger, WandbWriter, Writer, create_writer
 from mujax.loop import EnvironmentLoop
 from mujax.observers import EnvLoopObserver, InfoKeysObserver
 from mujax.types import EnvironmentSpec, make_environment_spec
@@ -33,6 +33,7 @@ __all__ = [
     "Actor",
     "Algorithm",
     "CheckpointingConfig",
+    "ConsoleWriter",
     "EnvLoopObserver",
     "EnvironmentLoop",
     "EnvironmentSpec",
@@ -49,6 +50,7 @@ __all__ = [
     "SampledMZ",
     "SampledMZConfig",
     "WandbWriter",
+    "Writer",
     "algorithm_for",
     "create_writer",
     "load_actor",

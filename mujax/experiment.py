@@ -14,7 +14,6 @@ from typing import Any
 import gymnasium as gym
 import jax
 import optax
-from clu.metric_writers import MetricWriter
 from tqdm.auto import tqdm
 
 from mujax.actor import Actor
@@ -23,7 +22,7 @@ from mujax.algorithms import ALGORITHMS, algorithm_for
 from mujax.checkpoint import BestCheckpointer, CheckpointingConfig, StateCheckpointer, load_params, resolve_checkpoint
 from mujax.config import MuZeroConfig
 from mujax.learner import Learner
-from mujax.loggers import Logger, to_hparams
+from mujax.loggers import Logger, Writer
 from mujax.loop import Counter, EnvHook, EnvironmentLoop
 from mujax.observers import ActionFractionObserver, EnvLoopObserver, PolicyEntropyObserver
 from mujax.reanalyze import Reanalyzer
@@ -58,8 +57,8 @@ class ExperimentConfig:
         seed: Seeds the network init, search and replay sampling, and the first env reset (train sub-envs get
             `seed + i`, the evaluator `seed + num_envs + i`).
         observer_factories: Each env loop (actor and evaluator) gets its own instance.
-        writer: CLU `MetricWriter` (e.g. `create_writer(...)`); learner, actor and evaluator write to it under
-            `learner/`, `actor/`, `evaluator/`. Closed at the end of `run_experiment`. None: only the progress bar.
+        writer: e.g. `create_writer(...)`; learner, actor and evaluator write to it under `learner/`, `actor/`,
+            `evaluator/`. Closed at the end of `run_experiment`. None: only the progress bar.
         hparams: Extra hyperparameters (e.g. env id) written to `writer` together with the algorithm config.
         checkpoint_extra: JSON-serializable info to add to the checkpoint metadata.
         train_env_hook / eval_env_hook: `hook(env, learner_steps)`; see EnvironmentLoop.
@@ -72,7 +71,7 @@ class ExperimentConfig:
     eval_environment_factory: Callable[[int], gym.vector.VectorEnv] | None = None
     seed: int = 0
     observer_factories: Sequence[Callable[[], EnvLoopObserver]] = ()
-    writer: MetricWriter | None = None
+    writer: Writer | None = None
     hparams: dict | None = None
     evaluation: EvaluationConfig = dataclasses.field(default_factory=EvaluationConfig)
     checkpointing: CheckpointingConfig | None = None
@@ -190,7 +189,7 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
     graphdef, params = algorithm.init(spec, config, learner_key)
     if writer is not None:
         hparams = {"algo": algorithm.name, "seed": experiment.seed, **config.to_dict(), **(experiment.hparams or {})}
-        writer.write_hparams(to_hparams(hparams))
+        writer.write_config(hparams)
 
     replay = Buffer(
         spec,

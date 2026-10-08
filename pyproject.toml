@@ -35,10 +35,6 @@ dependencies = [
     "distrax>=0.1.9",
     "jaxtyping>=0.2.36",
     "tyro>=1.0.16",
-    "clu>=0.0.12",
-    "tensorflow-cpu>=2.16; sys_platform != 'darwin'",  # clu.metric_writers imports tensorflow
-    "tensorflow>=2.16; sys_platform == 'darwin'",
-    "tensorboard>=2.16",
 ]
 
 [project.urls]
