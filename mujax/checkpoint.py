@@ -108,7 +108,9 @@ class BestCheckpointer:
             return
         artifact = wandb.Artifact(name=f"{wandb.run.name}-checkpoint", type="model", metadata=metadata)
         artifact.add_dir(step_dir, name="checkpoint")
-        wandb.run.log_artifact(artifact, aliases=["latest", "best"]).wait()
+        logged = wandb.run.log_artifact(artifact, aliases=["latest", "best"])
+        if not wandb.run.offline:  # offline artifacts are uploaded by `wandb sync`
+            logged.wait()
 
 
 class StateCheckpointer:

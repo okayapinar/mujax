@@ -14,6 +14,7 @@ from typing import Any
 import gymnasium as gym
 import jax
 import optax
+from clu.metric_writers import MetricWriter
 from tqdm.auto import tqdm
 
 from mujax.actor import Actor
@@ -22,7 +23,7 @@ from mujax.algorithms import ALGORITHMS, algorithm_for
 from mujax.checkpoint import BestCheckpointer, CheckpointingConfig, StateCheckpointer, load_params, resolve_checkpoint
 from mujax.config import MuZeroConfig
 from mujax.learner import Learner
-from mujax.loggers import LoggerFactory
+from mujax.loggers import Logger, to_hparams
 from mujax.loop import Counter, EnvHook, EnvironmentLoop
 from mujax.observers import ActionFractionObserver, EnvLoopObserver, PolicyEntropyObserver
 from mujax.reanalyze import Reanalyzer
@@ -55,8 +56,9 @@ class ExperimentConfig:
         eval_environment_factory: seed -> `gym.vector.VectorEnv` for evaluation (usually
             num_envs=1); if None, there is no evaluator.
         observer_factories: Each env loop (actor and evaluator) gets its own instance.
-        logger_factory: `label -> Logger` (e.g. `WandbLoggerFactory(...)`); learner, actor and evaluator each get
-            one logger. None: no logging, only the progress bar.
+        writer: CLU `MetricWriter` (e.g. `create_writer(...)`); learner, actor and evaluator write to it under
+            `learner/`, `actor/`, `evaluator/`. Closed at the end of `run_experiment`. None: only the progress bar.
+        hparams: Extra hyperparameters (e.g. env id) written to `writer` together with the algorithm config.
         checkpoint_extra: JSON-serializable info to add to the checkpoint metadata.
         train_env_hook / eval_env_hook: `hook(env, learner_steps)`; see EnvironmentLoop.
     """
@@ -68,7 +70,8 @@ class ExperimentConfig:
     eval_environment_factory: Callable[[int], gym.vector.VectorEnv] | None = None
     seed: int = 0
     observer_factories: Sequence[Callable[[], EnvLoopObserver]] = ()
-    logger_factory: LoggerFactory | None = None
+    writer: MetricWriter | None = None
+    hparams: dict | None = None
     evaluation: EvaluationConfig = dataclasses.field(default_factory=EvaluationConfig)
     checkpointing: CheckpointingConfig | None = None
     checkpoint_extra: dict | None = None
@@ -171,13 +174,19 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
     dataset_key, learner_key, actor_key, eval_key = jax.random.split(jax.random.PRNGKey(experiment.seed), 4)
     stop_event = threading.Event()
     counter = Counter()
-    make_logger = experiment.logger_factory or (lambda label: None)
+    writer = experiment.writer
+
+    def make_logger(label: str) -> Logger | None:
+        return None if writer is None else Logger(label, writer)
 
     environment = experiment.environment_factory(experiment.seed)
     eval_environment = experiment.eval_environment_factory(experiment.seed + 1) if experiment.eval_environment_factory else None
     spec = make_environment_spec(environment)
     num_envs = int(environment.num_envs)
     graphdef, params = algorithm.init(spec, config, learner_key)
+    if writer is not None:
+        hparams = {"algo": algorithm.name, "seed": experiment.seed, **config.to_dict(), **(experiment.hparams or {})}
+        writer.write_hparams(to_hparams(hparams))
 
     replay = Buffer(
         spec,
@@ -311,9 +320,8 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
             environment.close(terminate=True)  # so AsyncVectorEnv subprocesses close without waiting
             if eval_environment is not None:
                 eval_environment.close(terminate=True)
-            close_logger = getattr(experiment.logger_factory, "close", None)
-            if close_logger is not None:
-                close_logger()
+            if writer is not None:
+                writer.close()
             for sig, handler in previous_handlers.items():
                 signal.signal(sig, handler)
 

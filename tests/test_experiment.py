@@ -56,9 +56,11 @@ def test_resume_continues_from_state(tmp_path):
 
 def test_cli(tmp_path):
     main([
-        "--num-envs", "2", "--num-steps", "3", "--checkpoint-dir", str(tmp_path),
+        "--num-envs", "2", "--num-steps", "3", "--checkpoint-dir", str(tmp_path / "checkpoints"), "--log-dir", str(tmp_path / "runs"),
         "gmz", "--num-simulations", "4", "--reanalyze-num-simulations", "4", "--batch-size", "8",
         "--max-replay-size", "2048", "--num-bins", "21", "--embedding-dim", "8",
         "--representation-layer-sizes", "16", "--prediction-layer-sizes", "16", "--dynamics-layer-sizes", "16",
     ])  # fmt: skip
-    assert len(list(tmp_path.iterdir())) == 1
+    assert len(list((tmp_path / "checkpoints").iterdir())) == 1
+    (run_dir,) = (tmp_path / "runs").iterdir()
+    assert any(path.name.startswith("events.out.tfevents") for path in run_dir.iterdir())
