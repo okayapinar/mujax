@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mujax"
+dynamic = ["version"]
+description = "MuZero, Stochastic MuZero and Gumbel MuZero for Gymnasium environments, built on JAX and mctx."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+keywords = ["muzero", "reinforcement-learning", "jax", "mcts", "gymnasium"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "jax>=0.4.30",
+    "flax>=0.10.0",
+    "optax>=0.2.0",
+    "orbax-checkpoint>=0.11.0",
+    "mctx>=0.0.6",
+    "flashbax>=0.1.3",
+    "gymnasium>=1.1.0",
+    "numpy>=2.0.0",
+    "tqdm",
+    "psutil",
+    "rlax>=0.1.9",
+    "distrax>=0.1.9",
+    "tyro>=1.0.16",
+    "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+cuda12 = ["jax[cuda12]>=0.4.30"]
+wandb = ["wandb"]
+
+[project.scripts]
+mujax = "mujax.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "mujax.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mujax*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
