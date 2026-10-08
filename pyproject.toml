@@ -37,6 +37,11 @@ dependencies = [
     "scipy>=1.11",
 ]
 
+[project.urls]
+Homepage = "https://github.com/okayapinar/mujax"
+Repository = "https://github.com/okayapinar/mujax"
+Issues = "https://github.com/okayapinar/mujax/issues"
+
 [project.optional-dependencies]
 cuda12 = ["jax[cuda12]>=0.4.30"]
 wandb = ["wandb"]

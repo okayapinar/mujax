@@ -62,7 +62,7 @@ run_experiment(
 actor, metadata = load_actor("checkpoints/cartpole")
 ```
 
-Environments must use `AutoresetMode.SAME_STEP`. See [`examples/`](examples/) for complete training and evaluation scripts.
+Environments must use `AutoresetMode.SAME_STEP`. See [`examples/`](https://github.com/okayapinar/mujax/tree/master/examples) for complete training and evaluation scripts.
 
 ## Layout
 
