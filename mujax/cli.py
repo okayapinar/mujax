@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import dataclasses
 import os
-from collections.abc import Callable
 from datetime import datetime
 from typing import Annotated
 
@@ -12,7 +11,7 @@ import tyro
 from mujax.algorithms import GMZConfig, MZConfig, SampledMZConfig, SMZConfig, algorithm_for
 from mujax.checkpoint import CheckpointingConfig
 from mujax.experiment import ExperimentConfig, run_experiment
-from mujax.loggers import Logger, WandbLoggerFactory
+from mujax.loggers import WandbLoggerFactory
 
 AgentConfig = tyro.conf.OmitSubcommandPrefixes[
     Annotated[MZConfig, tyro.conf.subcommand("mz", prefix_name=False)]
@@ -38,7 +37,7 @@ class Args:
     checkpoint_dir: str = "checkpoints"
     wandb_project: str = "mujax"
     wandb_api_key: str | None = None  # If unset, wandb's own credentials (`wandb login`) are used
-    no_wandb: bool = False
+    wandb: bool = False  # Log to W&B; otherwise only the progress bar is shown
 
 
 def make_vec_env(env_id: str, num_envs: int) -> gym.vector.VectorEnv:
@@ -52,8 +51,8 @@ def main(argv: list[str] | None = None) -> None:
     config = args.agent.with_num_steps(args.num_steps)
 
     run_name = f"{algo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    logger_factory: Callable[[str], Logger] = Logger
-    if not args.no_wandb:
+    logger_factory = None
+    if args.wandb:
         logger_factory = WandbLoggerFactory(
             project=args.wandb_project,
             name=run_name,

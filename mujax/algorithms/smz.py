@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Sequence
-from typing import NamedTuple
-
 import distrax
-import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import mctx
+from flax import nnx
 
 from mujax.algorithm import Algorithm, SearchPolicy
 from mujax.algorithms import muzero
@@ -41,94 +39,57 @@ class SMZConfig(PUCTConfig):
     vqvae_beta: float = 0.25  # commitment loss weight
 
 
-class Decision(nn.Module):
+class Decision(nnx.Module):
     """(latent, action) -> afterstate; chance logits and afterstate value from the afterstate."""
 
-    layer_sizes: Sequence[int]
-    embedding_dim: int
-    codebook_size: int
-    num_actions: int
-    num_bins: int
+    def __init__(self, embedding_dim: int, layer_sizes: Sequence[int], codebook_size: int, num_actions: int, num_bins: int, *, rngs: nnx.Rngs):
+        self.num_actions = num_actions
+        self.afterstate = Embedding(embedding_dim + num_actions, layer_sizes, embedding_dim, rngs=rngs)
+        self.chance_logits = Head(embedding_dim, layer_sizes, codebook_size, rngs=rngs)
+        self.afterstate_value = Head(embedding_dim, layer_sizes, num_bins, rngs=rngs)
 
-    @nn.compact
     def __call__(self, latent, action) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        afterstate = Embedding(self.layer_sizes, self.embedding_dim)(muzero.one_hot_concat(latent, action, self.num_actions))
-        chance_logits = Head(self.layer_sizes, self.codebook_size)(afterstate)
-        afterstate_value_logits = Head(self.layer_sizes, self.num_bins)(afterstate)
-        return afterstate, chance_logits, afterstate_value_logits
+        afterstate = self.afterstate(muzero.one_hot_concat(latent, action, self.num_actions))
+        return afterstate, self.chance_logits(afterstate), self.afterstate_value(afterstate)
 
 
-class Chance(nn.Module):
+class Chance(nnx.Module):
     """(afterstate, chance_code) -> (next_latent, reward_logits). The code is one-hot (search) or straight-through (learner)."""
 
-    layer_sizes: Sequence[int]
-    embedding_dim: int
-    num_bins: int
+    def __init__(self, embedding_dim: int, layer_sizes: Sequence[int], codebook_size: int, num_bins: int, *, rngs: nnx.Rngs):
+        self.embedding = Embedding(embedding_dim + codebook_size, layer_sizes, embedding_dim, rngs=rngs)
+        self.reward = Head(embedding_dim, layer_sizes, num_bins, rngs=rngs)
 
-    @nn.compact
     def __call__(self, afterstate, chance_code) -> tuple[jnp.ndarray, jnp.ndarray]:
-        next_latent = Embedding(self.layer_sizes, self.embedding_dim)(jnp.concatenate([afterstate, chance_code], axis=-1))
-        return next_latent, Head(self.layer_sizes, self.num_bins)(next_latent)
+        next_latent = self.embedding(jnp.concatenate([afterstate, chance_code], axis=-1))
+        return next_latent, self.reward(next_latent)
 
 
-class SMZNetworks(NamedTuple):
-    encoder: Head  # obs -> codebook logits (VQ-VAE encoder)
-    representation: Embedding
-    prediction: Prediction
-    decision: Decision
-    chance: Chance
+class SMZModel(nnx.Module):
+    def __init__(self, spec: EnvironmentSpec, config: SMZConfig, rngs: nnx.Rngs):
+        d, k = config.embedding_dim, config.codebook_size
+        self.encoder = Head(spec.obs_dim, config.encoder_layer_sizes, k, rngs=rngs)  # obs -> codebook logits (VQ-VAE encoder)
+        self.representation = Embedding(spec.obs_dim, config.representation_layer_sizes, d, rngs=rngs)
+        self.prediction = Prediction(d, config.prediction_layer_sizes, spec.num_actions, config.num_bins, rngs=rngs)
+        self.decision = Decision(d, config.decision_layer_sizes, k, spec.num_actions, config.num_bins, rngs=rngs)
+        self.chance = Chance(d, config.chance_layer_sizes, k, config.num_bins, rngs=rngs)
 
 
-class SMZParams(NamedTuple):
-    encoder: dict
-    representation: dict
-    prediction: dict
-    decision: dict
-    chance: dict
-
-
-def make_networks(spec: EnvironmentSpec, config: SMZConfig) -> SMZNetworks:
-    return SMZNetworks(
-        encoder=Head(config.encoder_layer_sizes, config.codebook_size),
-        representation=Embedding(config.representation_layer_sizes, config.embedding_dim),
-        prediction=Prediction(config.prediction_layer_sizes, spec.num_actions, config.num_bins),
-        decision=Decision(config.decision_layer_sizes, config.embedding_dim, config.codebook_size, spec.num_actions, config.num_bins),
-        chance=Chance(config.chance_layer_sizes, config.embedding_dim, config.num_bins),
-    )
-
-
-def init_params(networks: SMZNetworks, spec: EnvironmentSpec, key: jax.Array) -> SMZParams:
-    k_enc, k_repr, k_pred, k_dec, k_chance = jax.random.split(key, 5)
-    obs = jnp.zeros((1, spec.obs_dim))
-    action = jnp.zeros((1,), dtype=jnp.int32)
-    code = jnp.zeros((1, networks.encoder.output_dim))
-    repr_params = networks.representation.init(k_repr, obs)
-    latent = networks.representation.apply(repr_params, obs)
-    decision_params = networks.decision.init(k_dec, latent, action)
-    afterstate, _, _ = networks.decision.apply(decision_params, latent, action)
-    return SMZParams(
-        encoder=networks.encoder.init(k_enc, obs),
-        representation=repr_params,
-        prediction=networks.prediction.init(k_pred, latent),
-        decision=decision_params,
-        chance=networks.chance.init(k_chance, afterstate, code),
-    )
-
-
-def make_policy(networks: SMZNetworks, spec: EnvironmentSpec, config: SMZConfig, evaluation: bool) -> SearchPolicy:
+def make_policy(graphdef: nnx.GraphDef, spec: EnvironmentSpec, config: SMZConfig, evaluation: bool) -> SearchPolicy:
     """Batched Stochastic MuZero search. `evaluation=True` turns off temperature and Dirichlet noise."""
     support = Support.from_config(config)
-    codebook_size = networks.encoder.output_dim
+    codebook_size = config.codebook_size
     exploration = muzero.puct_exploration(config, spec.num_actions, evaluation)
 
     def decision_fn(params, key, action, latent):
-        afterstate, chance_logits, afterstate_value_logits = networks.decision.apply(params.decision, latent, action)
+        afterstate, chance_logits, afterstate_value_logits = nnx.merge(graphdef, params).decision(latent, action)
         output = mctx.DecisionRecurrentFnOutput(chance_logits=chance_logits, afterstate_value=support.logits_to_scalar(afterstate_value_logits))
         return output, afterstate
 
     def chance_fn(params, key, chance_outcome, afterstate):
-        next_latent, reward_logits = networks.chance.apply(params.chance, afterstate, jax.nn.one_hot(chance_outcome, codebook_size))
-        value_logits, policy_logits = networks.prediction.apply(params.prediction, next_latent)
+        model = nnx.merge(graphdef, params)
+        next_latent, reward_logits = model.chance(afterstate, jax.nn.one_hot(chance_outcome, codebook_size))
+        value_logits, policy_logits = model.prediction(next_latent)
         reward = support.logits_to_scalar(reward_logits)
         output = mctx.ChanceRecurrentFnOutput(
             action_logits=policy_logits,
@@ -142,7 +103,7 @@ def make_policy(networks: SMZNetworks, spec: EnvironmentSpec, config: SMZConfig,
         out = mctx.stochastic_muzero_policy(
             params,
             key,
-            muzero.root_output(networks, support, params, obs),
+            muzero.root_output(nnx.merge(graphdef, params), support, obs),
             decision_fn,
             chance_fn,
             num_simulations=config.num_simulations,
@@ -155,17 +116,17 @@ def make_policy(networks: SMZNetworks, spec: EnvironmentSpec, config: SMZConfig,
     return policy
 
 
-def loss(networks: SMZNetworks, config: SMZConfig, params: SMZParams, batch) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
-    def unroll_step(params, latent, now: Targets, next_: Targets):
-        afterstate, chance_logits, afterstate_value_logits = networks.decision.apply(params.decision, latent, now.action)
+def loss(graphdef: nnx.GraphDef, config: SMZConfig, params: nnx.State, batch) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
+    def unroll_step(model: SMZModel, latent, now: Targets, next_: Targets):
+        afterstate, chance_logits, afterstate_value_logits = model.decision(latent, now.action)
 
         # VQ-VAE: code of the next observation; the gradient flows to the encoder via straight-through.
-        code_logits = networks.encoder.apply(params.encoder, next_.observation)
+        code_logits = model.encoder(next_.observation)
         code_onehot = jax.nn.one_hot(jnp.argmax(code_logits, axis=-1), code_logits.shape[-1])
         code = code_logits + jax.lax.stop_gradient(code_onehot - code_logits)
 
-        next_latent, reward_logits = networks.chance.apply(params.chance, afterstate, code)
-        value_logits, policy_logits = networks.prediction.apply(params.prediction, next_latent)
+        next_latent, reward_logits = model.chance(afterstate, code)
+        value_logits, policy_logits = model.prediction(next_latent)
         losses = {
             "afterstate_value": muzero.masked_mean(muzero.cross_entropy(afterstate_value_logits, now.value_probs), now.in_episode),
             "chance": muzero.masked_mean(muzero.cross_entropy(chance_logits, code), next_.in_episode),
@@ -178,10 +139,10 @@ def loss(networks: SMZNetworks, config: SMZConfig, params: SMZParams, batch) -> 
         return next_latent, losses, {"code_usage": jnp.mean(code_onehot, axis=0)}
 
     loss_weights = {"value": config.value_loss_weight, "afterstate_value": config.value_loss_weight, "commitment": config.vqvae_beta}
-    total_loss, metrics = muzero.loss(networks, config, params, batch, unroll_step=unroll_step, loss_weights=loss_weights)
+    total_loss, metrics = muzero.loss(graphdef, config, params, batch, unroll_step=unroll_step, loss_weights=loss_weights)
     code_usage = jnp.mean(metrics.pop("code_usage"), axis=0)  # (K, codebook) -> (codebook,)
     metrics["chance_code_perplexity"] = jnp.exp(distrax.Categorical(probs=code_usage).entropy())
     return total_loss, metrics
 
 
-SMZ = Algorithm("smz", SMZConfig, make_networks, init_params, make_policy, loss, muzero.make_value_fn)
+SMZ = Algorithm("smz", SMZConfig, SMZModel, make_policy, loss, muzero.make_value_fn)

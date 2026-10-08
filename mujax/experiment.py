@@ -22,7 +22,7 @@ from mujax.algorithms import ALGORITHMS, algorithm_for
 from mujax.checkpoint import BestCheckpointer, CheckpointingConfig, StateCheckpointer, load_params, resolve_checkpoint
 from mujax.config import MuZeroConfig
 from mujax.learner import Learner
-from mujax.loggers import Logger
+from mujax.loggers import LoggerFactory
 from mujax.loop import Counter, EnvHook, EnvironmentLoop
 from mujax.observers import ActionFractionObserver, EnvLoopObserver, PolicyEntropyObserver
 from mujax.reanalyze import Reanalyzer
@@ -55,6 +55,8 @@ class ExperimentConfig:
         eval_environment_factory: seed -> `gym.vector.VectorEnv` for evaluation (usually
             num_envs=1); if None, there is no evaluator.
         observer_factories: Each env loop (actor and evaluator) gets its own instance.
+        logger_factory: `label -> Logger` (e.g. `WandbLoggerFactory(...)`); learner, actor and evaluator each get
+            one logger. None: no logging, only the progress bar.
         checkpoint_extra: JSON-serializable info to add to the checkpoint metadata.
         train_env_hook / eval_env_hook: `hook(env, learner_steps)`; see EnvironmentLoop.
     """
@@ -66,7 +68,7 @@ class ExperimentConfig:
     eval_environment_factory: Callable[[int], gym.vector.VectorEnv] | None = None
     seed: int = 0
     observer_factories: Sequence[Callable[[], EnvLoopObserver]] = ()
-    logger_factory: Callable[[str], Logger] = Logger
+    logger_factory: LoggerFactory | None = None
     evaluation: EvaluationConfig = dataclasses.field(default_factory=EvaluationConfig)
     checkpointing: CheckpointingConfig | None = None
     checkpoint_extra: dict | None = None
@@ -169,13 +171,13 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
     dataset_key, learner_key, actor_key, eval_key = jax.random.split(jax.random.PRNGKey(experiment.seed), 4)
     stop_event = threading.Event()
     counter = Counter()
-    make_logger = experiment.logger_factory
+    make_logger = experiment.logger_factory or (lambda label: None)
 
     environment = experiment.environment_factory(experiment.seed)
     eval_environment = experiment.eval_environment_factory(experiment.seed + 1) if experiment.eval_environment_factory else None
     spec = make_environment_spec(environment)
     num_envs = int(environment.num_envs)
-    networks = algorithm.make_networks(spec, config)
+    graphdef, params = algorithm.init(spec, config, learner_key)
 
     replay = Buffer(
         spec,
@@ -187,8 +189,8 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
     )
     optimizer, lr_schedule = make_optimizer(config)
     learner = Learner(
-        functools.partial(algorithm.loss, networks, config),
-        algorithm.init_params(networks, spec, learner_key),
+        functools.partial(algorithm.loss, graphdef, config),
+        params,
         optimizer,
         lr_schedule=lr_schedule,
         batch_size=config.batch_size,
@@ -206,8 +208,8 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
     dataset = Reanalyzer(
         replay,
         config=config,
-        policy=algorithm.make_policy(networks, spec, reanalyze_config, False),
-        value_fn=algorithm.make_value_fn(networks, config),
+        policy=algorithm.make_policy(graphdef, spec, reanalyze_config, False),
+        value_fn=algorithm.make_value_fn(graphdef, config),
         get_params=learner.get_params,
         device=learner_device,
         random_key=dataset_key,
@@ -216,12 +218,12 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
 
     def make_actor(key: jax.Array, evaluation: bool) -> Actor:
         return Actor(
-            algorithm.make_policy(networks, spec, config, evaluation),
+            algorithm.make_policy(graphdef, spec, config, evaluation),
             key,
             learner.get_params,
             num_actions=spec.num_actions,
             replay=None if evaluation else replay,
-            value_fn=None if evaluation else algorithm.make_value_fn(networks, config),
+            value_fn=None if evaluation else algorithm.make_value_fn(graphdef, config),
             device=actor_device,
             update_period=config.variable_update_period,
             per_episode_update=evaluation,
@@ -330,10 +332,10 @@ def load_actor(reference: str, *, seed: int = 0, device: jax.Device | None = Non
     algorithm = ALGORITHMS[metadata["algo"]]
     config = algorithm.config_cls.from_dict(metadata["config"])
     spec = EnvironmentSpec(**metadata["environment_spec"])
-    networks = algorithm.make_networks(spec, config)
-    params = load_params(step_dir, template=algorithm.init_params(networks, spec, jax.random.PRNGKey(0)))
+    graphdef, template = algorithm.init(spec, config, jax.random.PRNGKey(0))
+    params = load_params(step_dir, template)
     actor = Actor(
-        algorithm.make_policy(networks, spec, config, True),
+        algorithm.make_policy(graphdef, spec, config, True),
         jax.random.PRNGKey(seed),
         lambda: (params, int(metadata.get("step", 0))),
         num_actions=spec.num_actions,

@@ -1,13 +1,12 @@
-from typing import NamedTuple
-
 import numpy as np
+from flax import nnx
 
 from mujax.checkpoint import BestCheckpointer, CheckpointingConfig, StateCheckpointer
 from mujax.learner import TrainingState
 
 
-class Params(NamedTuple):
-    w: np.ndarray
+def Params(w: np.ndarray) -> nnx.State:
+    return nnx.State({"w": nnx.Param(w)})
 
 
 class FakeLearner:

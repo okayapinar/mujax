@@ -6,6 +6,7 @@ import dataclasses
 import functools
 
 import mctx
+from flax import nnx
 
 from mujax.algorithm import Algorithm, SearchPolicy
 from mujax.algorithms import muzero, mz
@@ -29,7 +30,7 @@ class GMZConfig(MuZeroConfig):
     dynamics_layer_sizes: tuple[int, ...] = (256, 256, 256)
 
 
-def make_policy(networks: mz.MZNetworks, spec: EnvironmentSpec, config: GMZConfig, evaluation: bool) -> SearchPolicy:
+def make_policy(graphdef: nnx.GraphDef, spec: EnvironmentSpec, config: GMZConfig, evaluation: bool) -> SearchPolicy:
     """Batched Gumbel MuZero search. `evaluation=True` turns off the Gumbel noise."""
     support = Support.from_config(config)
     max_num_considered_actions = min(int(config.max_num_considered_actions), spec.num_actions)
@@ -40,8 +41,8 @@ def make_policy(networks: mz.MZNetworks, spec: EnvironmentSpec, config: GMZConfi
         out = mctx.gumbel_muzero_policy(
             params,
             key,
-            muzero.root_output(networks, support, params, obs),
-            mz.recurrent_fn(networks, support, config),
+            muzero.root_output(nnx.merge(graphdef, params), support, obs),
+            mz.recurrent_fn(graphdef, support, config),
             num_simulations=config.num_simulations,
             invalid_actions=invalid_actions,
             max_depth=config.max_depth,
@@ -54,4 +55,4 @@ def make_policy(networks: mz.MZNetworks, spec: EnvironmentSpec, config: GMZConfi
     return policy
 
 
-GMZ = Algorithm("gmz", GMZConfig, mz.make_networks, mz.init_params, make_policy, mz.loss, muzero.make_value_fn)
+GMZ = Algorithm("gmz", GMZConfig, mz.MZModel, make_policy, mz.loss, muzero.make_value_fn)

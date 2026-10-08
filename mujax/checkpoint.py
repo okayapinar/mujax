@@ -14,6 +14,7 @@ from typing import Any
 import jax
 import numpy as np
 import orbax.checkpoint as ocp
+from flax import nnx
 from orbax.checkpoint.checkpoint_managers import ContinuousCheckpointingPolicy
 
 from mujax.learner import Learner
@@ -62,14 +63,14 @@ class BestCheckpointer:
         self.step = 0
         self.params: dict | None = None
 
-    def maybe_update(self, score: float, step: int, params: Any) -> None:
+    def maybe_update(self, score: float, step: int, params: nnx.State) -> None:
         score = float(score)
         with self._lock:
             if score <= self.score:
                 return
             self.score = score
             self.step = int(step)
-            self.params = jax.tree.map(np.asarray, params._asdict())
+            self.params = jax.tree.map(np.asarray, nnx.to_pure_dict(params))
 
     def maybe_persist(self) -> None:
         """Writes if the Orbax save policy allows it (`every_sec` since the last write) and a better checkpoint was found since."""
@@ -182,7 +183,8 @@ def resolve_checkpoint(reference: str) -> tuple[str, dict[str, Any]]:
     return step_dir, metadata
 
 
-def load_params(step_dir: str, template: Any) -> Any:
-    """Reads the params in a step directory using the shapes/dtypes of `template` (a NamedTuple)."""
-    restored = ocp.StandardCheckpointer().restore(os.path.join(step_dir, "params"), template._asdict())
-    return type(template)(**restored)
+def load_params(step_dir: str, template: nnx.State) -> nnx.State:
+    """Reads the params in a step directory using the shapes/dtypes of `template`; best params are stored as a pure dict."""
+    restored = ocp.StandardCheckpointer().restore(os.path.join(step_dir, "params"), nnx.to_pure_dict(template))
+    nnx.replace_by_pure_dict(template, restored)
+    return template

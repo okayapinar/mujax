@@ -21,6 +21,8 @@ import dataclasses
 import jax
 import jax.numpy as jnp
 import mctx
+from flax import nnx
+from jaxtyping import Array, Bool, Float, Int, PRNGKeyArray
 
 from mujax.algorithm import Algorithm, SearchPolicy
 from mujax.algorithms import muzero, mz
@@ -37,13 +39,17 @@ class SampledMZConfig(mz.MZConfig):
 
 
 def sampled_prior_logits(
-    key: jax.Array, policy_logits: jnp.ndarray, invalid_actions: jnp.ndarray | None, num_samples: int, temperature: float
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+    key: PRNGKeyArray,
+    policy_logits: Float[Array, "B A"],
+    invalid_actions: Int[Array, "B A"] | None,
+    num_samples: int,
+    temperature: float,
+) -> tuple[Float[Array, "B A"], Bool[Array, "B A"]]:
     """Samples K actions per row from β = softmax(logits / τ) and returns (prior_logits, sampled).
 
-    prior_logits (B, A): log((β̂ / β) · π) on the sampled actions, the dtype's minimum elsewhere (zero mass under
+    prior_logits: log((β̂ / β) · π) on the sampled actions, the dtype's minimum elsewhere (zero mass under
     softmax, as in mctx's own masking). Invalid actions (mask value 1) are never sampled.
-    sampled (B, A): bool, True for actions drawn at least once.
+    sampled: True for actions drawn at least once.
     """
     min_logit = jnp.finfo(policy_logits.dtype).min
     num_actions = policy_logits.shape[-1]
@@ -53,14 +59,14 @@ def sampled_prior_logits(
 
     log_pi = jax.nn.log_softmax(masked(policy_logits))
     log_beta = jax.nn.log_softmax(masked(policy_logits / temperature))
-    samples = jax.random.categorical(key, log_beta, shape=(num_samples, *policy_logits.shape[:-1]))  # (K, B)
-    counts = jnp.sum(jax.nn.one_hot(samples, num_actions, dtype=policy_logits.dtype), axis=0)  # (B, A)
+    samples: Int[Array, "K B"] = jax.random.categorical(key, log_beta, shape=(num_samples, *policy_logits.shape[:-1]))
+    counts: Float[Array, "B A"] = jnp.sum(jax.nn.one_hot(samples, num_actions, dtype=policy_logits.dtype), axis=0)
     sampled = counts > 0
     log_beta_hat = jnp.log(jnp.maximum(counts, 1.0) / num_samples)  # counts >= 1 where sampled; the rest is masked
     return jnp.where(sampled, log_beta_hat - log_beta + log_pi, min_logit), sampled
 
 
-def noisy_logits(key: jax.Array, policy_logits: jnp.ndarray, dirichlet_fraction: float, dirichlet_alpha: float) -> jnp.ndarray:
+def noisy_logits(key: PRNGKeyArray, policy_logits: Float[Array, "B A"], dirichlet_fraction: float, dirichlet_alpha: float) -> Float[Array, "B A"]:
     """log((1 - f) · softmax(logits) + f · Dirichlet(α)); the root exploration noise of MuZero, applied before sampling."""
     batch_size, num_actions = policy_logits.shape
     noise = jax.random.dirichlet(key, jnp.full((num_actions,), dirichlet_alpha), shape=(batch_size,))
@@ -68,7 +74,7 @@ def noisy_logits(key: jax.Array, policy_logits: jnp.ndarray, dirichlet_fraction:
     return jnp.log(jnp.maximum(probs, jnp.finfo(probs.dtype).tiny))
 
 
-def make_policy(networks: mz.MZNetworks, spec: EnvironmentSpec, config: SampledMZConfig, evaluation: bool) -> SearchPolicy:
+def make_policy(graphdef: nnx.GraphDef, spec: EnvironmentSpec, config: SampledMZConfig, evaluation: bool) -> SearchPolicy:
     """Batched Sampled MuZero (PUCT over K sampled actions). `evaluation=True` turns off temperature and Dirichlet noise.
 
     Unsampled actions get zero prior mass, so their PUCT score is only the completed Q-value, which
@@ -77,7 +83,7 @@ def make_policy(networks: mz.MZNetworks, spec: EnvironmentSpec, config: SampledM
     """
     support = Support.from_config(config)
     exploration = muzero.puct_exploration(config, spec.num_actions, evaluation)
-    model_step = mz.recurrent_fn(networks, support, config)
+    model_step = mz.recurrent_fn(graphdef, support, config)
     num_samples, temperature = int(config.num_sampled_actions), float(config.sample_temperature)
 
     def recurrent_fn(params, key, action, latent):
@@ -88,7 +94,7 @@ def make_policy(networks: mz.MZNetworks, spec: EnvironmentSpec, config: SampledM
     def policy(params, obs, key, invalid_actions, learner_steps) -> SearchOutput:
         kwargs = exploration(learner_steps)
         key, noise_key, sample_key = jax.random.split(key, 3)
-        root = muzero.root_output(networks, support, params, obs)
+        root = muzero.root_output(nnx.merge(graphdef, params), support, obs)
         logits = noisy_logits(noise_key, root.prior_logits, kwargs["dirichlet_fraction"], kwargs["dirichlet_alpha"])
         prior_logits, sampled = sampled_prior_logits(sample_key, logits, invalid_actions, num_samples, temperature)
         out = mctx.muzero_policy(
@@ -111,4 +117,4 @@ def make_policy(networks: mz.MZNetworks, spec: EnvironmentSpec, config: SampledM
     return policy
 
 
-SampledMZ = Algorithm("sampled_mz", SampledMZConfig, mz.make_networks, mz.init_params, make_policy, mz.loss, muzero.make_value_fn)
+SampledMZ = Algorithm("sampled_mz", SampledMZConfig, mz.MZModel, make_policy, mz.loss, muzero.make_value_fn)

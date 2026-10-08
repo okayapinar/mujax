@@ -32,18 +32,12 @@ def make_env(num_envs: int) -> gym.vector.VectorEnv:
 
 
 def main() -> None:
-    config = (
-        SMZConfig(batch_size=256) if "--smz" in sys.argv else GMZConfig(batch_size=256)
-    )
+    config = SMZConfig(batch_size=256) if "--smz" in sys.argv else GMZConfig(batch_size=256)
     experiment = ExperimentConfig(
         config=config.with_num_steps(NUM_STEPS),
         environment_factory=lambda seed: make_env(16),
         eval_environment_factory=lambda seed: make_env(1),
         max_num_learner_steps=NUM_STEPS,
-        checkpointing=CheckpointingConfig(
-            directory="checkpoints/cartpole", upload_to_wandb=False
-        ),
-        checkpoint_extra={"env_id": "CartPole-v1"},
     )
     run_experiment(experiment)
 

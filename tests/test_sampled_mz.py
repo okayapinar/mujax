@@ -45,9 +45,8 @@ def test_sampled_prior_respects_invalid_actions_and_temperature():
 def test_search_visits_only_sampled_actions():
     config = tiny_sampled_mz()
     spec = EnvironmentSpec(obs_dim=4, num_actions=6)
-    networks = SampledMZ.make_networks(spec, config)
-    params = SampledMZ.init_params(networks, spec, jax.random.PRNGKey(0))
-    policy = jax.jit(SampledMZ.make_policy(networks, spec, config, evaluation=False))
+    graphdef, params = SampledMZ.init(spec, config, jax.random.PRNGKey(0))
+    policy = jax.jit(SampledMZ.make_policy(graphdef, spec, config, evaluation=False))
 
     obs = jnp.zeros((16, 4))
     invalid = jnp.zeros((16, 6)).at[:, 5].set(1.0)

@@ -24,7 +24,7 @@ class TrainingState(NamedTuple):
 
 
 class Learner:
-    """Takes gradient steps with the given loss, logs metrics, and saves/restores its state.
+    """Takes gradient steps with the given loss, logs metrics (if a logger is given), and saves/restores its state.
 
     Algorithm-agnostic: `loss_fn` must be (params, batch) -> (loss, metrics).
     """
@@ -47,7 +47,7 @@ class Learner:
         self._optimizer = optimizer
         self._lr_schedule = lr_schedule
         self._batch_size = batch_size
-        self._logger = logger or Logger("learner")
+        self._logger = logger
         self._counter = counter or Counter()
         self._replay = replay  # for metrics only
         self._log_every = max(1, log_every)
@@ -77,7 +77,7 @@ class Learner:
         if self._last_log_time is None:  # first step (keep compile time out of the rate); also on a resumed run
             self._last_log_time = time.time()
             self._last_log_steps = self.learn_steps - 1
-        if self.learn_steps % self._log_every == 0:
+        if self._logger is not None and self.learn_steps % self._log_every == 0:
             self._log(metrics, counts)
 
     def _gradient_step_fn(self, params: Any, opt_state: optax.OptState, batch: Any) -> tuple[Any, optax.OptState, dict[str, jnp.ndarray]]:

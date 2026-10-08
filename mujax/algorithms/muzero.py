@@ -15,12 +15,13 @@ from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple, Self
 
 import distrax
-import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import mctx
 import optax
 import rlax
+from flax import nnx
+from jaxtyping import Array, Float, Int
 
 from mujax.algorithm import ValueFn
 from mujax.config import MuZeroConfig
@@ -52,22 +53,22 @@ class Support(NamedTuple):
         return (self.max - self.min) / (self.num_bins - 1)
 
     @property
-    def bin_centers(self) -> jnp.ndarray:
+    def bin_centers(self) -> Float[Array, " bins"]:
         return jnp.linspace(self.min, self.max, self.num_bins)
 
-    def to_probs(self, x: jnp.ndarray) -> jnp.ndarray:
-        """Scalar (...) -> probabilities (..., num_bins)."""
+    def to_probs(self, x: Float[Array, "*shape"]) -> Float[Array, "*shape bins"]:
+        """Scalar -> probabilities over the bins."""
         center = jnp.clip(rlax.signed_logp1(x), self.min, self.max)[..., None]
         gauss_cdf = functools.partial(jax.scipy.stats.norm.cdf, loc=center, scale=self.sigma_scale * self.bin_width)
         half = self.bin_width / 2
         probs = gauss_cdf(self.bin_centers + half) - gauss_cdf(self.bin_centers - half)
         return probs / jnp.maximum(jnp.sum(probs, axis=-1, keepdims=True), 1e-8)
 
-    def to_scalar(self, probs: jnp.ndarray) -> jnp.ndarray:
+    def to_scalar(self, probs: Float[Array, "*shape bins"]) -> Float[Array, "*shape"]:
         """Inverse of `to_probs`: expectation in symlog space, then symexp."""
         return rlax.signed_expm1(rlax.transform_from_2hot(probs, self.min, self.max, self.num_bins))
 
-    def logits_to_scalar(self, logits: jnp.ndarray) -> jnp.ndarray:
+    def logits_to_scalar(self, logits: Float[Array, "*shape bins"]) -> Float[Array, "*shape"]:
         return self.to_scalar(jax.nn.softmax(logits))
 
 
@@ -76,55 +77,54 @@ class Support(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
-class LayerNormMLP(nn.Module):
-    """MLP whose layers are Dense -> LayerNorm -> ReLU."""
+class LayerNormMLP(nnx.Module):
+    """MLP whose layers are Linear -> LayerNorm -> ReLU."""
 
-    layer_sizes: Sequence[int]
+    def __init__(self, in_features: int, layer_sizes: Sequence[int], *, rngs: nnx.Rngs):
+        sizes = [in_features, *layer_sizes]
+        self.linears = nnx.List([nnx.Linear(i, o, rngs=rngs) for i, o in zip(sizes[:-1], sizes[1:])])
+        self.norms = nnx.List([nnx.LayerNorm(o, rngs=rngs) for o in layer_sizes])
+        self.out_features = sizes[-1]
 
-    @nn.compact
-    def __call__(self, x):
-        for size in self.layer_sizes:
-            x = nn.relu(nn.LayerNorm()(nn.Dense(size)(x)))
+    def __call__(self, x: Float[Array, "*batch I"]) -> Float[Array, "*batch O"]:
+        for linear, norm in zip(self.linears, self.norms):
+            x = nnx.relu(norm(linear(x)))
         return x
 
 
-class Head(nn.Module):
+class Head(nnx.Module):
     """LayerNormMLP + linear output; used for policy/value/reward logits."""
 
-    layer_sizes: Sequence[int]
-    output_dim: int
+    def __init__(self, in_features: int, layer_sizes: Sequence[int], output_dim: int, *, rngs: nnx.Rngs):
+        self.mlp = LayerNormMLP(in_features, layer_sizes, rngs=rngs)
+        self.out = nnx.Linear(self.mlp.out_features, output_dim, rngs=rngs)
 
-    @nn.compact
-    def __call__(self, x):
-        return nn.Dense(self.output_dim)(LayerNormMLP(self.layer_sizes)(x))
+    def __call__(self, x: Float[Array, "*batch I"]) -> Float[Array, "*batch O"]:
+        return self.out(self.mlp(x))
 
 
-class Embedding(nn.Module):
+class Embedding(nnx.Module):
     """Head + min-max normalization; used by networks that produce latent states (representation, dynamics, afterstate)."""
 
-    layer_sizes: Sequence[int]
-    embedding_dim: int
+    def __init__(self, in_features: int, layer_sizes: Sequence[int], embedding_dim: int, *, rngs: nnx.Rngs):
+        self.head = Head(in_features, layer_sizes, embedding_dim, rngs=rngs)
 
-    @nn.compact
-    def __call__(self, x):
-        return min_max_normalize(Head(self.layer_sizes, self.embedding_dim)(x))
+    def __call__(self, x: Float[Array, "*batch I"]) -> Float[Array, "*batch D"]:
+        return min_max_normalize(self.head(x))
 
 
-class Prediction(nn.Module):
+class Prediction(nnx.Module):
     """Latent -> (value_logits, policy_logits)."""
 
-    layer_sizes: Sequence[int]
-    num_actions: int
-    num_bins: int
+    def __init__(self, embedding_dim: int, layer_sizes: Sequence[int], num_actions: int, num_bins: int, *, rngs: nnx.Rngs):
+        self.value = Head(embedding_dim, layer_sizes, num_bins, rngs=rngs)
+        self.policy = Head(embedding_dim, layer_sizes, num_actions, rngs=rngs)
 
-    @nn.compact
-    def __call__(self, latent) -> tuple[jnp.ndarray, jnp.ndarray]:
-        value_logits = Head(self.layer_sizes, self.num_bins)(latent)
-        policy_logits = Head(self.layer_sizes, self.num_actions)(latent)
-        return value_logits, policy_logits
+    def __call__(self, latent: Float[Array, "B D"]) -> tuple[Float[Array, "B bins"], Float[Array, "B A"]]:
+        return self.value(latent), self.policy(latent)
 
 
-def min_max_normalize(x: jnp.ndarray) -> jnp.ndarray:
+def min_max_normalize(x: Float[Array, "*batch D"]) -> Float[Array, "*batch D"]:
     """Rescales the last axis to [0, 1] (the latent normalization from the MuZero paper)."""
     x_min = x.min(axis=-1, keepdims=True)
     x_max = x.max(axis=-1, keepdims=True)
@@ -136,22 +136,22 @@ def scale_gradient(x: jnp.ndarray, scale: float) -> jnp.ndarray:
     return x * scale + jax.lax.stop_gradient(x) * (1.0 - scale)
 
 
-def one_hot_concat(latent: jnp.ndarray, index: jnp.ndarray, num_classes: int) -> jnp.ndarray:
+def one_hot_concat(latent: Float[Array, "B D"], index: Int[Array, " B"], num_classes: int) -> Float[Array, "B D+C"]:
     """Appends a one-hot action/code to the latent; the input of the dynamics and decision networks."""
     return jnp.concatenate([latent, jax.nn.one_hot(index, num_classes)], axis=-1)
 
 
-def root_output(networks: Any, support: Support, params: Any, obs: jnp.ndarray) -> mctx.RootFnOutput:
+def root_output(model: Any, support: Support, obs: Float[Array, "B O"]) -> mctx.RootFnOutput:
     """representation -> prediction; the root input of the mctx search."""
-    embedding = networks.representation.apply(params.representation, obs)
-    value_logits, policy_logits = networks.prediction.apply(params.prediction, embedding)
+    embedding = model.representation(obs)
+    value_logits, policy_logits = model.prediction(embedding)
     return mctx.RootFnOutput(prior_logits=policy_logits, value=support.logits_to_scalar(value_logits), embedding=embedding)
 
 
-def make_value_fn(networks: Any, config: MuZeroConfig) -> ValueFn:
+def make_value_fn(graphdef: nnx.GraphDef, config: MuZeroConfig) -> ValueFn:
     """(params, obs) -> search-free root value (N,); used for the bootstrap tail in reanalyze."""
     support = Support.from_config(config)
-    return lambda params, obs: root_output(networks, support, params, obs).value
+    return lambda params, obs: root_output(nnx.merge(graphdef, params), support, obs).value
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ class Targets(NamedTuple):
     in_episode: jnp.ndarray  # 1 inside the episode, 0 after it ends (loss mask)
 
 
-# A single unroll step of an algorithm: (params, latent, now, next) -> (next_latent, losses, extras).
+# A single unroll step of an algorithm: (model, latent, now, next) -> (next_latent, losses, extras).
 #   now / next: targets at times t and t+1, (B, ...).
 #   losses: name -> scalar; averaged over steps and weighted by `loss_weights`.
 #   extras: name -> array; stacked along time as (K, ...) and added to the metrics.
@@ -190,14 +190,14 @@ def masked_mean(values: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
     return jnp.sum(values * mask) / jnp.maximum(jnp.sum(mask), 1e-6)
 
 
-def in_episode_mask(discount: jnp.ndarray, truncated: jnp.ndarray) -> jnp.ndarray:
+def in_episode_mask(discount: Float[Array, "B T"], truncated: Float[Array, "B T"]) -> Float[Array, "B T"]:
     """1 at t=0, then 0 after the episode ends (terminated: discount 0, or truncated)."""
     alive = discount * (1.0 - truncated)
     return jnp.concatenate([jnp.ones_like(alive[:, :1]), jnp.cumprod(alive[:, :-1], axis=-1)], axis=-1)
 
 
-def value_targets(config: MuZeroConfig, batch: Any) -> jnp.ndarray:
-    """n-step bootstrapped returns (B, T-1); the bootstrap value is the (possibly reanalyzed) search value from replay.
+def value_targets(config: MuZeroConfig, batch: Any) -> Float[Array, "B T-1"]:
+    """n-step bootstrapped returns; the bootstrap value is the (possibly reanalyzed) search value from replay.
 
     At a truncated step the next replay entry already belongs to a new episode, so that step bootstraps
     from V(final_obs) (`bootstrap_value`) and lambda 0 stops the return from reaching past it.
@@ -226,10 +226,10 @@ def make_targets(config: MuZeroConfig, support: Support, experience: Any) -> tup
     return targets, value_target
 
 
-def _root_loss(networks: Any, config: MuZeroConfig, params: Any, targets: Targets) -> tuple[jnp.ndarray, jnp.ndarray, dict[str, jnp.ndarray]]:
+def _root_loss(model: Any, config: MuZeroConfig, targets: Targets) -> tuple[jnp.ndarray, jnp.ndarray, dict[str, jnp.ndarray]]:
     """representation + prediction on the t=0 observation; returns (root_loss, latent, metrics)."""
-    latent = networks.representation.apply(params.representation, targets.observation[:, 0])
-    value_logits, policy_logits = networks.prediction.apply(params.prediction, latent)
+    latent = model.representation(targets.observation[:, 0])
+    value_logits, policy_logits = model.prediction(latent)
     value_loss = jnp.mean(cross_entropy(value_logits, targets.value_probs[:, 0]))
     policy_loss = jnp.mean(cross_entropy(policy_logits, targets.policy_probs[:, 0]))
     root_loss = config.value_loss_weight * value_loss + policy_loss
@@ -243,7 +243,7 @@ def _root_loss(networks: Any, config: MuZeroConfig, params: Any, targets: Target
 
 
 def _unroll_loss(
-    config: MuZeroConfig, params: Any, latent: jnp.ndarray, targets: Targets, unroll_step: UnrollStep, loss_weights: dict[str, float]
+    config: MuZeroConfig, model: Any, latent: jnp.ndarray, targets: Targets, unroll_step: UnrollStep, loss_weights: dict[str, float]
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray], dict[str, jnp.ndarray]]:
     """Runs `unroll_step` for `num_unroll_steps` steps with a scan.
 
@@ -253,7 +253,7 @@ def _unroll_loss(
 
     def scan_step(latent, step):
         now, next_ = step
-        latent, losses, extras = unroll_step(params, latent, now, next_)
+        latent, losses, extras = unroll_step(model, latent, now, next_)
         return scale_gradient(latent, config.latent_gradient_scale), (losses, extras)
 
     time_major = jax.tree.map(lambda a: jnp.moveaxis(a, 1, 0), targets)  # (T, B, ...)
@@ -280,7 +280,7 @@ def _target_metrics(experience: Any, value_target: jnp.ndarray) -> dict[str, jnp
 
 
 def loss(
-    networks: Any,
+    graphdef: nnx.GraphDef,
     config: MuZeroConfig,
     params: Any,
     batch: Any,
@@ -292,12 +292,13 @@ def loss(
 
     Losses missing from `loss_weights` get weight 1. Metrics report the losses unweighted.
     """
+    model = nnx.merge(graphdef, params)
     support = Support.from_config(config)
     experience = batch.experience
     targets, value_target = make_targets(config, support, experience)
 
-    root_loss, latent, root_metrics = _root_loss(networks, config, params, targets)
-    unroll_loss, unroll_losses, extras = _unroll_loss(config, params, latent, targets, unroll_step, loss_weights)
+    root_loss, latent, root_metrics = _root_loss(model, config, targets)
+    unroll_loss, unroll_losses, extras = _unroll_loss(config, model, latent, targets, unroll_step, loss_weights)
     total_loss = root_loss + unroll_loss
 
     metrics = {

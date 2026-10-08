@@ -19,6 +19,7 @@ from mujax.checkpoint import CheckpointingConfig
 from mujax.config import MuZeroConfig
 from mujax.experiment import EvaluationConfig, ExperimentConfig, load_actor, run_experiment
 from mujax.learner import Learner
+from mujax.loggers import Logger, LoggerFactory, WandbLoggerFactory
 from mujax.loop import EnvironmentLoop
 from mujax.observers import EnvLoopObserver, InfoKeysObserver
 from mujax.types import EnvironmentSpec, make_environment_spec
@@ -42,10 +43,13 @@ __all__ = [
     "MZ",
     "MZConfig",
     "Learner",
+    "Logger",
+    "LoggerFactory",
     "MuZeroConfig",
     "SMZConfig",
     "SampledMZ",
     "SampledMZConfig",
+    "WandbLoggerFactory",
     "algorithm_for",
     "load_actor",
     "make_environment_spec",

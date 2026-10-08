@@ -5,9 +5,9 @@ from __future__ import annotations
 import abc
 from collections.abc import Sequence
 
+import distrax
 import gymnasium as gym
 import numpy as np
-import scipy.stats
 
 from mujax.types import TimeStep
 
@@ -49,7 +49,7 @@ class PolicyEntropyObserver(EnvLoopObserver):
     def observe(self, env, step: TimeStep) -> None:
         if step.search is None:
             return
-        self._sum += scipy.stats.entropy(np.asarray(step.search.policy_probs, dtype=np.float64), axis=-1)
+        self._sum += np.asarray(distrax.Categorical(probs=step.search.policy_probs).entropy(), dtype=np.float64)
         self._steps += 1
 
     def get_metrics(self, index: int) -> dict[str, float]:

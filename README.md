@@ -29,7 +29,7 @@ pip install "mujax[wandb]"        # Weights & Biases logging
 ## Command line
 
 ```bash
-mujax --env CartPole-v1 --num-steps 20000 --no-wandb gmz --num-simulations 16
+mujax --env CartPole-v1 --num-steps 20000 gmz --num-simulations 16
 mujax --env Acrobot-v1 smz --batch-size 1024
 mujax --env CartPole-v1 mz --dirichlet-fraction 0.25
 mujax --env LunarLander-v3 sampled_mz --num-sampled-actions 3
@@ -65,6 +65,16 @@ actor, metadata = load_actor("checkpoints/cartpole")
 ```
 
 Environments must use `AutoresetMode.SAME_STEP`. See [`examples/`](https://github.com/okayapinar/mujax/tree/master/examples) for complete training (`cartpole.py`, `sampled_mz.py`) and evaluation (`evaluate.py`) scripts.
+
+### Logging
+
+By default only the progress bar is shown. To log learner, actor and evaluator metrics to Weights & Biases:
+
+```python
+ExperimentConfig(..., logger_factory=WandbLoggerFactory(project="mujax"))
+```
+
+On the command line pass `--wandb` (`--wandb-project`, `--wandb-api-key`).
 
 ## Layout
 
