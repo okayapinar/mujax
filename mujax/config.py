@@ -11,10 +11,10 @@ class MuZeroConfig:
     """Hyperparameters shared by SMZ and GMZ."""
 
     # Rollout / targets
-    discount: float = 0.997
+    effective_horizon: int = 333  # discount = 1 - 1/H
     num_unroll_steps: int = 5
     num_bootstrapping: int = 10  # appendix H. muzero paper
-    bootstrapping_lambda: float = 0.5
+    bootstrapping_lambda: float = 0.95
 
     # Search
     num_simulations: int = 32
@@ -23,12 +23,12 @@ class MuZeroConfig:
     # Categorical value/reward support (in symlog space): +-10 corresponds to roughly +-22000, bin width 0.1.
     support_min: float = -10.0
     support_max: float = 10.0
-    num_bins: int = 201
+    num_bins: int = 255
     hl_gauss_sigma_scale: float = 0.75
     latent_gradient_scale: float = 0.5
 
     # Replay / reanalyze
-    max_replay_size: int | None = None  # If None, computed from free RAM
+    max_replay_size: int | None = 5_000_000  # None: computed from free RAM
     min_replay_size: int = 10_000  # Transitions (all envs) in replay before the learner starts; capped at the buffer size
     replay_period: int = 1
     reanalyze_ratio: float = 0.5
@@ -53,6 +53,10 @@ class MuZeroConfig:
 
     # How many select_action calls between actor pulls of the learner params
     variable_update_period: int = 1
+
+    @property
+    def discount(self) -> float:
+        return 1.0 - 1.0 / self.effective_horizon
 
     @property
     def sequence_length(self) -> int:

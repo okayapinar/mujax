@@ -204,7 +204,14 @@ def value_targets(config: MuZeroConfig, batch: Any) -> jnp.ndarray:
     lambdas = config.bootstrapping_lambda * (1.0 - truncated)
 
     def n_step(reward, discount, value, lambda_):
-        return rlax.n_step_bootstrapped_returns(reward, discount, value, n=config.num_bootstrapping, lambda_t=lambda_, stop_target_gradients=True)
+        return rlax.n_step_bootstrapped_returns(
+            reward,
+            discount,
+            value,
+            n=config.num_bootstrapping,
+            lambda_t=lambda_,
+            stop_target_gradients=True,
+        )
 
     reward = batch.reward[..., :-1]
     discount = batch.discount[..., :-1] * config.discount

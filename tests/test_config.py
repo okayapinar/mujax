@@ -6,6 +6,7 @@ from mujax import GMZ, MZ, SMZ, GMZConfig, MuZeroConfig, MZConfig, SMZConfig, al
 @pytest.mark.parametrize("cls", [MuZeroConfig, MZConfig, SMZConfig, GMZConfig])
 def test_dict_round_trip(cls):
     config = cls()
+    assert config.discount == 1.0 - 1.0 / config.effective_horizon
     assert cls.from_dict(config.to_dict()) == config
 
 
