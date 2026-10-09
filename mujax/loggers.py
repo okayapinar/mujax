@@ -1,6 +1,6 @@
 """Metric logging to the terminal and Weights & Biases.
 
-    writer = create_writer(console=True, wandb_project="mujax")
+    writer = create_writer(console=True, keys=("learner/loss",), wandb_project="mujax")
     ExperimentConfig(..., writer=writer)
 
 Learner, actor and evaluator each get a `Logger`: it writes their metrics as `<label>/<key>` scalars, at most once per
@@ -50,10 +50,22 @@ class Logger:
 
 
 class ConsoleWriter:
-    """Prints to the terminal with `tqdm.write`, so the progress bar stays intact."""
+    """Prints to the terminal with `tqdm.write`, so the progress bar stays intact.
+
+    `keys` keeps only those metrics (prefixed names, e.g. `learner/loss`), in that order. None prints all.
+    """
+
+    def __init__(self, keys: Sequence[str] | None = None) -> None:
+        self._keys = None if keys is None else tuple(keys)
 
     def write(self, step: int, scalars: Mapping[str, float]) -> None:
-        tqdm.write(f"[{step}] " + ", ".join(f"{key}={value:.6g}" for key, value in sorted(scalars.items())))
+        if self._keys is not None:
+            scalars = {key: scalars[key] for key in self._keys if key in scalars}
+            if not scalars:
+                return
+        else:
+            scalars = dict(sorted(scalars.items()))
+        tqdm.write(f"[{step}] " + ", ".join(f"{key}={value:.6g}" for key, value in scalars.items()))
 
     def write_config(self, config: Mapping[str, Any]) -> None:
         tqdm.write(f"[config] {dict(config)}")
@@ -107,11 +119,16 @@ class MultiWriter:
                 writer.close()
 
 
-def create_writer(*, console: bool = True, wandb_project: str | None = None, wandb_name: str | None = None) -> MultiWriter:
-    """Terminal (if `console`) and W&B (if `wandb_project`) behind one writer."""
+def create_writer(
+    *, console: bool = True, wandb_project: str | None = None, wandb_name: str | None = None, keys: Sequence[str] | None = None
+) -> MultiWriter:
+    """Terminal (if `console`) and W&B (if `wandb_project`) behind one writer.
+
+    `keys` limits the terminal line; W&B still receives every metric.
+    """
     writers: list[Writer] = []
     if console:
-        writers.append(ConsoleWriter())
+        writers.append(ConsoleWriter(keys))
     if wandb_project is not None:
         writers.append(WandbWriter(wandb_project, name=wandb_name))
     return MultiWriter(writers)

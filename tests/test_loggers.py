@@ -40,6 +40,15 @@ def test_console_writer_prints_one_line_per_write(monkeypatch):
     assert lines == ["[3] learner/grad_norm=1, learner/loss=0.5"]
 
 
+def test_console_writer_keeps_only_given_keys(monkeypatch):
+    lines = []
+    monkeypatch.setattr("mujax.loggers.tqdm.write", lines.append)
+    writer = ConsoleWriter(keys=("learner/loss",))
+    writer.write(3, {"learner/loss": 0.5, "learner/grad_norm": 1.0})
+    writer.write(4, {"learner/grad_norm": 1.0})
+    assert lines == ["[3] learner/loss=0.5"]
+
+
 def test_multi_writer_fans_out():
     a, b = _Recorder(), _Recorder()
     writer = MultiWriter([a, b])

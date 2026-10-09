@@ -25,9 +25,8 @@ class MuZeroConfig:
     num_bootstrapping: int = 10  # appendix H. muzero paper
     bootstrapping_lambda: float = 0.95
 
-    # Search
-    num_simulations: int = 32
-    reanalyze_num_simulations: int = 64
+    # Search. Actor and reanalyze use the same simulation count.
+    num_simulations: int = 16
 
     # Categorical value/reward support (in symlog space): +-10 corresponds to roughly +-22000, bin width 0.1.
     support_min: float = -20.0
@@ -61,7 +60,7 @@ class MuZeroConfig:
     prediction_layer_sizes: tuple[int, ...] = (256, 256, 256)
     embedding_dim: int = 64
 
-    variable_update_period: int = 100
+    variable_update_period: int = 20
 
     @property
     def discount(self) -> float:

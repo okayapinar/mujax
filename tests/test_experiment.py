@@ -59,7 +59,7 @@ def test_cli(tmp_path, monkeypatch):
     monkeypatch.setitem(SIZES, "S", (16, 1, 8))  # preset replaces the layer sizes; keep this smoke test small
     main([
         "--num-envs", "2", "--num-steps", "3", "--size", "S", "--checkpoint-dir", str(tmp_path / "checkpoints"), "--no-console",
-        "gmz", "--num-simulations", "4", "--reanalyze-num-simulations", "4", "--batch-size", "8",
+        "gmz", "--num-simulations", "4", "--batch-size", "8",
         "--max-replay-size", "2048", "--min-replay-size", "0", "--num-bins", "21",
     ])  # fmt: skip
     assert len(list((tmp_path / "checkpoints").iterdir())) == 1

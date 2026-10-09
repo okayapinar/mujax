@@ -221,11 +221,10 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
         state_checkpointer = StateCheckpointer(experiment.checkpointing, learner)
         if experiment.checkpointing.resume:
             state_checkpointer.restore()
-    reanalyze_config = dataclasses.replace(config, num_simulations=config.reanalyze_num_simulations)
     dataset = Reanalyzer(
         replay,
         config=config,
-        policy=algorithm.make_policy(graphdef, spec, reanalyze_config, False),
+        policy=algorithm.make_policy(graphdef, spec, config, False),
         value_fn=algorithm.make_value_fn(graphdef, config),
         get_params=learner.get_params,
         device=learner_device,

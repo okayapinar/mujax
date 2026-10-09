@@ -12,7 +12,6 @@ from mujax.algorithms import GMZConfig, SMZConfig
 # Networks and search small enough to compile and run within seconds.
 TINY = {
     "num_simulations": 4,
-    "reanalyze_num_simulations": 4,
     "num_unroll_steps": 2,
     "num_bootstrapping": 2,
     "num_bins": 21,

@@ -1,16 +1,13 @@
-"""Train Gumbel MuZero (or Stochastic MuZero with `--smz`) on CartPole and keep the best checkpoint.
+"""Train Gumbel MuZero on CartPole and keep the best checkpoint.
 
 python examples/cartpole.py
-python examples/cartpole.py --smz
 """
 
 from __future__ import annotations
 
-import sys
-
 import gymnasium as gym
 
-from mujax import ExperimentConfig, GMZConfig, SMZConfig, run_experiment
+from mujax import ExperimentConfig, GMZConfig, create_writer, run_experiment
 
 NUM_STEPS = 20_000
 
@@ -26,13 +23,14 @@ def make_env(num_envs: int) -> gym.vector.VectorEnv:
 
 
 def main() -> None:
-    # "S" networks: CartPole does not need more, and the CPU search runs about 4x faster than with the default "M".
-    config = (SMZConfig(batch_size=256) if "--smz" in sys.argv else GMZConfig(batch_size=256)).with_size("S")
+    config = GMZConfig(batch_size=32, reanalyze_ratio=1, replay_ratio=None).with_size("S")
     experiment = ExperimentConfig(
         config=config.with_num_steps(NUM_STEPS),
         environment_factory=lambda seed: make_env(16),
         eval_environment_factory=lambda seed: make_env(1),
         max_num_learner_steps=NUM_STEPS,
+        num_actors=8,
+        writer=create_writer(keys=("evaluator/episode_return", "learner/loss")),
     )
     run_experiment(experiment)
 
