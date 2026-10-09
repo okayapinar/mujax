@@ -16,7 +16,7 @@ from flax import nnx
 
 from mujax.algorithm import Algorithm, SearchPolicy
 from mujax.algorithms import muzero
-from mujax.algorithms.muzero import Embedding, Head, Prediction, PUCTConfig, Support, Targets
+from mujax.algorithms.muzero import Embedding, Head, Prediction, PUCTConfig, Support, SymlogInput, Targets
 from mujax.types import EnvironmentSpec, SearchOutput
 
 if TYPE_CHECKING:
@@ -47,7 +47,7 @@ class MZModel(nnx.Module):
     """The deterministic model: representation, prediction and dynamics."""
 
     def __init__(self, spec: EnvironmentSpec, config: MZConfig | GMZConfig, rngs: nnx.Rngs):
-        self.representation = Embedding(spec.obs_dim, config.representation_layer_sizes, config.embedding_dim, rngs=rngs)
+        self.representation = SymlogInput(Embedding(spec.obs_dim, config.representation_layer_sizes, config.embedding_dim, rngs=rngs))
         self.prediction = Prediction(config.embedding_dim, config.prediction_layer_sizes, spec.num_actions, config.num_bins, rngs=rngs)
         self.dynamics = Dynamics(config.embedding_dim, config.dynamics_layer_sizes, spec.num_actions, config.num_bins, rngs=rngs)
 

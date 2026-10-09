@@ -9,6 +9,7 @@ JAX, [mctx](https://github.com/google-deepmind/mctx) and [flashbax](https://gith
 - **Single process**: actor and evaluator run in threads on CPU, the learner runs on GPU when available.
 - **Reanalyze**: a fraction of every batch is re-searched with the latest parameters.
 - **Categorical value/reward** with HL-Gauss targets in symlog space.
+- **Symlog observations**: raw observations enter the networks through `signed_logp1` (DreamerV3), so no per-dimension normalization is needed.
 - **Checkpoints**: best parameters by evaluation score plus full training state for resuming (Orbax), optional W&B upload.
 
 The design is inspired by DeepMind's [Acme](https://github.com/google-deepmind/acme): the split into actor, learner,
@@ -29,7 +30,7 @@ pip install "mujax[wandb]"        # Weights & Biases logging
 ## Command line
 
 ```bash
-mujax --env CartPole-v1 --num-steps 20000 gmz --num-simulations 16
+mujax --env CartPole-v1 --num-steps 20000 gmz --num-simulations  16
 mujax --env Acrobot-v1 smz --batch-size 1024
 mujax --env CartPole-v1 mz --dirichlet-fraction 0.25
 mujax --env LunarLander-v3 sampled_mz --num-sampled-actions 3

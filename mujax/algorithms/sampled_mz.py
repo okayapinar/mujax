@@ -22,7 +22,6 @@ import jax
 import jax.numpy as jnp
 import mctx
 from flax import nnx
-from jaxtyping import Array, Bool, Float, Int, PRNGKeyArray
 
 from mujax.algorithm import Algorithm, SearchPolicy
 from mujax.algorithms import muzero, mz
@@ -39,12 +38,12 @@ class SampledMZConfig(mz.MZConfig):
 
 
 def sampled_prior_logits(
-    key: PRNGKeyArray,
-    policy_logits: Float[Array, "B A"],
-    invalid_actions: Int[Array, "B A"] | None,
+    key: jax.Array,
+    policy_logits: jnp.ndarray,
+    invalid_actions: jnp.ndarray | None,
     num_samples: int,
     temperature: float,
-) -> tuple[Float[Array, "B A"], Bool[Array, "B A"]]:
+) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Samples K actions per row from β = softmax(logits / τ) and returns (prior_logits, sampled).
 
     prior_logits: log((β̂ / β) · π) on the sampled actions, the dtype's minimum elsewhere (zero mass under
@@ -59,14 +58,14 @@ def sampled_prior_logits(
 
     log_pi = jax.nn.log_softmax(masked(policy_logits))
     log_beta = jax.nn.log_softmax(masked(policy_logits / temperature))
-    samples: Int[Array, "K B"] = jax.random.categorical(key, log_beta, shape=(num_samples, *policy_logits.shape[:-1]))
-    counts: Float[Array, "B A"] = jnp.sum(jax.nn.one_hot(samples, num_actions, dtype=policy_logits.dtype), axis=0)
+    samples = jax.random.categorical(key, log_beta, shape=(num_samples, *policy_logits.shape[:-1]))  # (K, B)
+    counts = jnp.sum(jax.nn.one_hot(samples, num_actions, dtype=policy_logits.dtype), axis=0)  # (B, A)
     sampled = counts > 0
     log_beta_hat = jnp.log(jnp.maximum(counts, 1.0) / num_samples)  # counts >= 1 where sampled; the rest is masked
     return jnp.where(sampled, log_beta_hat - log_beta + log_pi, min_logit), sampled
 
 
-def noisy_logits(key: PRNGKeyArray, policy_logits: Float[Array, "B A"], dirichlet_fraction: float, dirichlet_alpha: float) -> Float[Array, "B A"]:
+def noisy_logits(key: jax.Array, policy_logits: jnp.ndarray, dirichlet_fraction: float, dirichlet_alpha: float) -> jnp.ndarray:
     """log((1 - f) · softmax(logits) + f · Dirichlet(α)); the root exploration noise of MuZero, applied before sampling."""
     batch_size, num_actions = policy_logits.shape
     noise = jax.random.dirichlet(key, jnp.full((num_actions,), dirichlet_alpha), shape=(batch_size,))

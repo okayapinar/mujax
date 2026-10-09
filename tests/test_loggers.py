@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from mujax.loggers import Logger, MultiWriter
+from mujax.loggers import ConsoleWriter, Logger, MultiWriter
 
 
 class _Recorder:
@@ -31,6 +31,15 @@ def test_logger_throttles():
     logger.write({"loss": 1.0})
     logger.write({"loss": 2.0})
     assert len(recorder.writes) == 1
+
+
+def test_console_writer_keeps_only_named_keys(monkeypatch):
+    lines = []
+    monkeypatch.setattr("mujax.loggers.tqdm.write", lines.append)
+    writer = ConsoleWriter(keys=("learner/loss",))
+    writer.write(3, {"learner/loss": 0.5, "learner/grad_norm": 1.0})
+    writer.write(4, {"actor/episode_return": 10.0})
+    assert lines == ["[3] learner/loss=0.5"]
 
 
 def test_multi_writer_fans_out():

@@ -12,7 +12,7 @@ from flax import nnx
 
 from mujax.algorithm import Algorithm, SearchPolicy
 from mujax.algorithms import muzero
-from mujax.algorithms.muzero import Embedding, Head, Prediction, PUCTConfig, Support, Targets
+from mujax.algorithms.muzero import Embedding, Head, Prediction, PUCTConfig, Support, SymlogInput, Targets
 from mujax.types import EnvironmentSpec, SearchOutput
 
 
@@ -68,8 +68,8 @@ class Chance(nnx.Module):
 class SMZModel(nnx.Module):
     def __init__(self, spec: EnvironmentSpec, config: SMZConfig, rngs: nnx.Rngs):
         d, k = config.embedding_dim, config.codebook_size
-        self.encoder = Head(spec.obs_dim, config.encoder_layer_sizes, k, rngs=rngs)  # obs -> codebook logits (VQ-VAE encoder)
-        self.representation = Embedding(spec.obs_dim, config.representation_layer_sizes, d, rngs=rngs)
+        self.encoder = SymlogInput(Head(spec.obs_dim, config.encoder_layer_sizes, k, rngs=rngs))  # obs -> codebook logits (VQ-VAE encoder)
+        self.representation = SymlogInput(Embedding(spec.obs_dim, config.representation_layer_sizes, d, rngs=rngs))
         self.prediction = Prediction(d, config.prediction_layer_sizes, spec.num_actions, config.num_bins, rngs=rngs)
         self.decision = Decision(d, config.decision_layer_sizes, k, spec.num_actions, config.num_bins, rngs=rngs)
         self.chance = Chance(d, config.chance_layer_sizes, k, config.num_bins, rngs=rngs)

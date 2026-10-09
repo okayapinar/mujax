@@ -6,7 +6,6 @@ from typing import Any, NamedTuple
 
 import gymnasium as gym
 import numpy as np
-from jaxtyping import Float, Int
 
 
 class EnvironmentSpec(NamedTuple):
@@ -27,9 +26,9 @@ def make_environment_spec(env: gym.vector.VectorEnv) -> EnvironmentSpec:
 class SearchOutput(NamedTuple):
     """Search output; every field has shape (num_envs, ...)."""
 
-    action: Int[np.ndarray, " N"]
-    policy_probs: Float[np.ndarray, "N A"]  # MCTS visit distribution
-    value: Float[np.ndarray, " N"]  # search-improved root value
+    action: np.ndarray
+    policy_probs: np.ndarray  # MCTS visit distribution
+    value: np.ndarray  # search-improved root value
 
 
 class TimeStep(NamedTuple):

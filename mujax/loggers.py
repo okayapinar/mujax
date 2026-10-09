@@ -50,9 +50,19 @@ class Logger:
 
 
 class ConsoleWriter:
-    """Prints to the terminal with `tqdm.write`, so the progress bar stays intact."""
+    """Prints to the terminal with `tqdm.write`, so the progress bar stays intact.
+
+    `keys` limits the line to those names (`label/metric`). None prints every scalar.
+    """
+
+    def __init__(self, keys: Sequence[str] | None = None) -> None:
+        self._keys = None if keys is None else set(keys)
 
     def write(self, step: int, scalars: Mapping[str, float]) -> None:
+        if self._keys is not None:
+            scalars = {key: value for key, value in scalars.items() if key in self._keys}
+        if not scalars:
+            return
         tqdm.write(f"[{step}] " + ", ".join(f"{key}={value:.6g}" for key, value in sorted(scalars.items())))
 
     def write_config(self, config: Mapping[str, Any]) -> None:
