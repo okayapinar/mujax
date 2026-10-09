@@ -35,6 +35,9 @@ class MuZeroConfig:
     num_bins: int = 255
     hl_gauss_sigma_scale: float = 0.75
     latent_gradient_scale: float = 0.5
+    # Unimix (DreamerV3): the policy is (1 - unimix) * softmax(logits) + unimix / num_actions, so every action keeps at
+    # least unimix / num_actions probability under the search prior and in the loss. 0 turns it off.
+    policy_unimix: float = 0.01
 
     # Replay / reanalyze
     max_replay_size: int | None = 5_000_000  # None: computed from free RAM

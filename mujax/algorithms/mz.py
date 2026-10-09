@@ -48,7 +48,9 @@ class MZModel(nnx.Module):
 
     def __init__(self, spec: EnvironmentSpec, config: MZConfig | GMZConfig, rngs: nnx.Rngs):
         self.representation = SymlogInput(Embedding(spec.obs_dim, config.representation_layer_sizes, config.embedding_dim, rngs=rngs))
-        self.prediction = Prediction(config.embedding_dim, config.prediction_layer_sizes, spec.num_actions, config.num_bins, rngs=rngs)
+        self.prediction = Prediction(
+            config.embedding_dim, config.prediction_layer_sizes, spec.num_actions, config.num_bins, unimix=config.policy_unimix, rngs=rngs
+        )
         self.dynamics = Dynamics(config.embedding_dim, config.dynamics_layer_sizes, spec.num_actions, config.num_bins, rngs=rngs)
 
 

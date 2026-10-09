@@ -114,14 +114,30 @@ class Embedding(nnx.Module):
 
 
 class Prediction(nnx.Module):
-    """Latent -> (value_logits, policy_logits)."""
+    """Latent -> (value_logits, policy_logits); the policy logits already include unimix (`unimix_logits`).
 
-    def __init__(self, embedding_dim: int, layer_sizes: Sequence[int], num_actions: int, num_bins: int, *, rngs: nnx.Rngs):
+    Applying unimix inside the model gives the search prior, the loss and the reanalyze targets the same
+    distribution, so the network cannot drive an action's probability to zero anywhere.
+    """
+
+    def __init__(self, embedding_dim: int, layer_sizes: Sequence[int], num_actions: int, num_bins: int, *, unimix: float = 0.0, rngs: nnx.Rngs):
         self.value = Head(embedding_dim, layer_sizes, num_bins, rngs=rngs)
         self.policy = Head(embedding_dim, layer_sizes, num_actions, rngs=rngs)
+        self.unimix = float(unimix)
 
     def __call__(self, latent: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        return self.value(latent), self.policy(latent)
+        return self.value(latent), unimix_logits(self.policy(latent), self.unimix)
+
+
+def unimix_logits(logits: jnp.ndarray, ratio: float) -> jnp.ndarray:
+    """DreamerV3's unimix: log((1 - ratio) * softmax(logits) + ratio / A). Identity for ratio 0.
+
+    The result is normalized log-probabilities, so softmax / cross-entropy on it see the mixed distribution.
+    """
+    if ratio <= 0.0:
+        return logits
+    num_actions = logits.shape[-1]
+    return jnp.log((1.0 - ratio) * jax.nn.softmax(logits) + ratio / num_actions)
 
 
 def min_max_normalize(x: jnp.ndarray) -> jnp.ndarray:

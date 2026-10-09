@@ -70,7 +70,7 @@ class SMZModel(nnx.Module):
         d, k = config.embedding_dim, config.codebook_size
         self.encoder = SymlogInput(Head(spec.obs_dim, config.encoder_layer_sizes, k, rngs=rngs))  # obs -> codebook logits (VQ-VAE encoder)
         self.representation = SymlogInput(Embedding(spec.obs_dim, config.representation_layer_sizes, d, rngs=rngs))
-        self.prediction = Prediction(d, config.prediction_layer_sizes, spec.num_actions, config.num_bins, rngs=rngs)
+        self.prediction = Prediction(d, config.prediction_layer_sizes, spec.num_actions, config.num_bins, unimix=config.policy_unimix, rngs=rngs)
         self.decision = Decision(d, config.decision_layer_sizes, k, spec.num_actions, config.num_bins, rngs=rngs)
         self.chance = Chance(d, config.chance_layer_sizes, k, config.num_bins, rngs=rngs)
 
