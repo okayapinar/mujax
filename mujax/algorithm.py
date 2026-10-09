@@ -33,7 +33,7 @@ class Algorithm:
     algorithm functions rebuild the model with `nnx.merge(graphdef, params)`.
 
     Attributes:
-        name: Short name written to checkpoint metadata ("mz", "smz", "gmz").
+        name: Short name written to checkpoint metadata ("gmz", "smz").
         config_cls: Config class of this algorithm; `algorithm_for` uses it to pick the algorithm from a config.
         make_model: (spec, config, rngs) -> model (nnx.Module).
         make_policy: (graphdef, spec, config, evaluation) -> SearchPolicy.

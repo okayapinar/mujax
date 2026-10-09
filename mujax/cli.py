@@ -8,22 +8,20 @@ from typing import Annotated
 import gymnasium as gym
 import tyro
 
-from mujax.algorithms import GMZConfig, MZConfig, SampledMZConfig, SMZConfig, algorithm_for
+from mujax.algorithms import GMZConfig, SMZConfig, algorithm_for
 from mujax.checkpoint import CheckpointingConfig
 from mujax.experiment import ExperimentConfig, run_experiment
 from mujax.loggers import create_writer
 
 AgentConfig = tyro.conf.OmitSubcommandPrefixes[
-    Annotated[MZConfig, tyro.conf.subcommand("mz", prefix_name=False)]
+    Annotated[GMZConfig, tyro.conf.subcommand("gmz", prefix_name=False)]
     | Annotated[SMZConfig, tyro.conf.subcommand("smz", prefix_name=False)]
-    | Annotated[GMZConfig, tyro.conf.subcommand("gmz", prefix_name=False)]
-    | Annotated[SampledMZConfig, tyro.conf.subcommand("sampled_mz", prefix_name=False)]
 ]
 
 
 @dataclasses.dataclass
 class Args:
-    """MuZero / Stochastic MuZero / Gumbel MuZero / Sampled MuZero training on Gymnasium environments.
+    """Gumbel MuZero / Stochastic MuZero training on Gymnasium environments.
 
     Example: `mujax --env CartPole-v1 gmz --num-simulations 32`. lr_warmup_steps and
     temperature_decay_steps are scaled relative to the number of learner steps.
@@ -31,11 +29,12 @@ class Args:
 
     agent: AgentConfig
     env: str = "CartPole-v1"  # Gymnasium env id
-    num_envs: int = 16
+    num_envs: int = 16  # Sub-envs per actor thread
+    num_actors: int = 1  # Actor threads; the CPU search scales with the number of cores, actor steps are summed
     num_steps: int = 100_000  # Total learner steps
     # Total env steps (summed over envs); converted to learner steps with replay_ratio and overrides --num-steps.
     num_env_steps: int | None = None
-    size: str = "M"  # Network size preset: S, M, L, XL
+    size: str = "M"  # Network size preset: XS, S, M, L, XL (XS / S are enough for classic-control envs and search much faster)
     seed: int = 0
     checkpoint_dir: str = "checkpoints"
     console: bool = True  # Print metrics to the terminal
@@ -69,9 +68,10 @@ def main(argv: list[str] | None = None) -> None:
         environment_factory=lambda seed: make_vec_env(args.env, args.num_envs),
         eval_environment_factory=lambda seed: make_vec_env(args.env, 1),
         max_num_learner_steps=num_steps,
+        num_actors=args.num_actors,
         seed=args.seed,
         writer=writer,
-        hparams={"env": args.env, "num_envs": args.num_envs, "size": args.size},
+        hparams={"env": args.env, "num_envs": args.num_envs, "num_actors": args.num_actors, "size": args.size},
         checkpointing=CheckpointingConfig(directory=os.path.join(args.checkpoint_dir, run_name)),
         checkpoint_extra={"env_id": args.env},
     )

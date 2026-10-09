@@ -7,7 +7,7 @@ import jax
 import numpy as np
 
 from mujax.algorithm import SearchPolicy
-from mujax.replay import Buffer
+from mujax.replay import Adder, Buffer
 from mujax.types import SearchOutput, TimeStep, Transition
 
 
@@ -26,7 +26,8 @@ class Actor:
 
     Args:
         get_params: () -> (params, learner_steps); usually `Learner.get_params`.
-        replay: if given, every step is written here (training actor).
+        replay: if given, every step is written here (training actor); with several actor threads each gets its own
+            `Buffer.adder(i)`.
         value_fn: (params, obs) -> search-free value (N,); for episodes cut by the time limit,
             to bootstrap with V(final_obs). If None, a truncated episode is treated as terminated.
         update_period: how many `select_action` calls between params fetches.
@@ -41,7 +42,7 @@ class Actor:
         get_params: Callable[[], tuple[Any, int]],
         *,
         num_actions: int,
-        replay: Buffer | None = None,
+        replay: Adder | Buffer | None = None,
         value_fn: Callable[[Any, Any], Any] | None = None,
         device: jax.Device | None = None,
         update_period: int = 1,

@@ -2,10 +2,10 @@ import dataclasses
 
 import pytest
 
-from mujax import GMZ, MZ, SMZ, GMZConfig, MuZeroConfig, MZConfig, SMZConfig, algorithm_for
+from mujax import GMZ, SMZ, GMZConfig, MuZeroConfig, SMZConfig, algorithm_for
 
 
-@pytest.mark.parametrize("cls", [MuZeroConfig, MZConfig, SMZConfig, GMZConfig])
+@pytest.mark.parametrize("cls", [MuZeroConfig, SMZConfig, GMZConfig])
 def test_dict_round_trip(cls):
     config = cls()
     assert config.discount == 1.0 - 1.0 / config.effective_horizon
@@ -17,23 +17,21 @@ def test_from_dict_ignores_unknown_fields():
     assert SMZConfig.from_dict(data) == SMZConfig()
 
 
-@pytest.mark.parametrize("cls", [MZConfig, SMZConfig])
-def test_with_num_steps(cls):
-    config = cls().with_num_steps(1000)
+def test_with_num_steps():
+    config = SMZConfig().with_num_steps(1000)
     assert config.lr_warmup_steps == 100
     assert config.temperature_decay_steps == 1000
-    assert cls(lr_warmup_steps=50).with_num_steps(1000).lr_warmup_steps == 50
+    assert SMZConfig(lr_warmup_steps=50).with_num_steps(1000).lr_warmup_steps == 50
 
 
 def test_algorithm_for():
-    assert algorithm_for(MZConfig()) is MZ
     assert algorithm_for(SMZConfig()) is SMZ
     assert algorithm_for(GMZConfig()) is GMZ
     with pytest.raises(ValueError):
         algorithm_for(MuZeroConfig())
 
 
-@pytest.mark.parametrize("cls", [MZConfig, SMZConfig, GMZConfig])
+@pytest.mark.parametrize("cls", [SMZConfig, GMZConfig])
 def test_with_size(cls):
     config = cls().with_size("l")
     assert config.embedding_dim == 128
@@ -44,9 +42,8 @@ def test_with_size(cls):
         cls().with_size("huge")
 
 
-def test_size_m_is_the_mz_default():
+def test_size_m_is_the_default():
     assert GMZConfig().with_size("M") == GMZConfig()
-    assert MZConfig().with_size("M") == MZConfig()
 
 
 def test_num_learner_steps():

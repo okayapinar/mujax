@@ -32,7 +32,8 @@ def make_env(num_envs: int) -> gym.vector.VectorEnv:
 
 
 def main() -> None:
-    config = SMZConfig(batch_size=256) if "--smz" in sys.argv else GMZConfig(batch_size=256)
+    # "S" networks: CartPole does not need more, and the CPU search runs about 4x faster than with the default "M".
+    config = (SMZConfig(batch_size=256) if "--smz" in sys.argv else GMZConfig(batch_size=256)).with_size("S")
     experiment = ExperimentConfig(
         config=config.with_num_steps(NUM_STEPS),
         environment_factory=lambda seed: make_env(16),

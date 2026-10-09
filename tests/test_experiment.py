@@ -73,3 +73,17 @@ def test_actor_step_budget_stops_the_run():
     )
     # ratio 2, batch 8: ~2 * 60 / 8 = 15 learner steps, give or take the limiter slack (one batch) and one chunk.
     assert 10 <= learner.learn_steps <= 20
+
+
+def test_multiple_actor_threads():
+    from conftest import tiny_gmz
+
+    seeds = []
+
+    def factory(seed):
+        seeds.append(seed)
+        return make_vec_env(2)
+
+    learner = run_experiment(ExperimentConfig(config=tiny_gmz(), environment_factory=factory, num_actors=3, max_num_learner_steps=4))
+    assert learner.learn_steps == 4
+    assert seeds == [0, 2, 4]  # actor a gets seed + a * num_envs

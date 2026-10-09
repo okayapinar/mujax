@@ -6,7 +6,7 @@ import dataclasses
 from typing import Any, Self
 
 # Network size presets, `MuZeroConfig.with_size`: name -> (width, depth, embedding_dim). Every `*_layer_sizes` field
-# becomes (width,) * depth. "M" is the default of MZ / GMZ / SampledMZ.
+# becomes (width,) * depth. "M" is the default of GMZ.
 SIZES: dict[str, tuple[int, int, int]] = {
     "S": (128, 2, 32),
     "M": (256, 3, 64),

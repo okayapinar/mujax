@@ -4,16 +4,14 @@ from __future__ import annotations
 
 from mujax.algorithm import Algorithm
 from mujax.algorithms.gmz import GMZ, GMZConfig
-from mujax.algorithms.mz import MZ, MZConfig
-from mujax.algorithms.sampled_mz import SampledMZ, SampledMZConfig
 from mujax.algorithms.smz import SMZ, SMZConfig
 from mujax.config import MuZeroConfig
 
-ALGORITHMS: dict[str, Algorithm] = {MZ.name: MZ, SMZ.name: SMZ, GMZ.name: GMZ, SampledMZ.name: SampledMZ}
+ALGORITHMS: dict[str, Algorithm] = {SMZ.name: SMZ, GMZ.name: GMZ}
 
 
 def algorithm_for(config: MuZeroConfig) -> Algorithm:
-    """Algorithm by config class: an exact class match first, then a subclass match (SampledMZConfig extends MZConfig)."""
+    """Algorithm by config class: an exact class match first, then a subclass match."""
     for algorithm in ALGORITHMS.values():
         if type(config) is algorithm.config_cls:
             return algorithm
@@ -23,4 +21,4 @@ def algorithm_for(config: MuZeroConfig) -> Algorithm:
     raise ValueError(f"{type(config).__name__} icin algoritma bulunamadi; ExperimentConfig.algorithm ver.")
 
 
-__all__ = ["ALGORITHMS", "GMZ", "MZ", "SMZ", "GMZConfig", "MZConfig", "SMZConfig", "SampledMZ", "SampledMZConfig", "algorithm_for"]
+__all__ = ["ALGORITHMS", "GMZ", "SMZ", "GMZConfig", "SMZConfig", "algorithm_for"]

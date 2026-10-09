@@ -55,11 +55,14 @@ class ExperimentConfig:
             learner_steps ~= actor_steps * replay_ratio / batch_size, see `MuZeroConfig.num_learner_steps`.
             Both None: runs until early stopping or Ctrl-C.
         algorithm: if None, chosen from the config class (SMZConfig -> SMZ, GMZConfig -> GMZ).
-        environment_factory: seed -> `gym.vector.VectorEnv` for training.
+        environment_factory: seed -> `gym.vector.VectorEnv` for training; called once per actor thread.
+        num_actors: number of actor threads, each with its own env from `environment_factory` and its own search.
+            The search runs on CPU and releases the GIL, so throughput scales with the number of cores; `actor_steps`
+            is summed over all of them and the replay buffer holds `num_actors * num_envs` rows.
         eval_environment_factory: seed -> `gym.vector.VectorEnv` for evaluation (usually
             num_envs=1); if None, there is no evaluator.
-        seed: Seeds the network init, search and replay sampling, and the first env reset (train sub-envs get
-            `seed + i`, the evaluator `seed + num_envs + i`).
+        seed: Seeds the network init, search and replay sampling, and the first env reset (actor a's sub-env i gets
+            `seed + a * num_envs + i`, the evaluator `seed + num_actors * num_envs + i`).
         observer_factories: Each env loop (actor and evaluator) gets its own instance.
         writer: e.g. `create_writer(...)`; learner, actor and evaluator write to it under `learner/`, `actor/`,
             `evaluator/`. Closed at the end of `run_experiment`. None: only the progress bar.
@@ -72,6 +75,7 @@ class ExperimentConfig:
     environment_factory: Callable[[int], gym.vector.VectorEnv]
     max_num_learner_steps: int | None = None
     max_num_actor_steps: int | None = None
+    num_actors: int = 1
     algorithm: Algorithm | None = None
     eval_environment_factory: Callable[[int], gym.vector.VectorEnv] | None = None
     seed: int = 0
@@ -175,7 +179,11 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
     config = experiment.config
     algorithm = experiment.algorithm or algorithm_for(config)
     actor_device, learner_device = setup_devices()
+    num_actors = int(experiment.num_actors)
+    if num_actors < 1:
+        raise ValueError(f"num_actors pozitif olmali, gelen: {num_actors}")
     dataset_key, learner_key, actor_key, eval_key = jax.random.split(jax.random.PRNGKey(experiment.seed), 4)
+    actor_keys = jax.random.split(actor_key, num_actors)
     stop_event = threading.Event()
     counter = Counter()
     writer = experiment.writer
@@ -183,11 +191,15 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
     def make_logger(label: str) -> Logger | None:
         return None if writer is None else Logger(label, writer)
 
-    environment = experiment.environment_factory(experiment.seed)
-    spec = make_environment_spec(environment)
-    num_envs = int(environment.num_envs)
-    # Train sub-envs use seeds seed..seed+num_envs-1; the evaluator starts right after so no initial state repeats.
-    eval_seed = experiment.seed + num_envs
+    environments = [experiment.environment_factory(experiment.seed)]
+    spec = make_environment_spec(environments[0])
+    num_envs = int(environments[0].num_envs)
+    # Actor a's sub-envs use seeds seed+a*num_envs..; the evaluator starts right after so no initial state repeats.
+    actor_seeds = [experiment.seed + index * num_envs for index in range(num_actors)]
+    environments += [experiment.environment_factory(seed) for seed in actor_seeds[1:]]
+    if any(int(env.num_envs) != num_envs for env in environments):
+        raise ValueError("environment_factory her aktor icin ayni num_envs ile env uretmeli")
+    eval_seed = experiment.seed + num_actors * num_envs
     eval_environment = experiment.eval_environment_factory(eval_seed) if experiment.eval_environment_factory else None
     graphdef, params = algorithm.init(spec, config, learner_key)
     if writer is not None:
@@ -204,6 +216,7 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
         period=config.replay_period,
         replay_ratio=config.replay_ratio,
         stop_event=stop_event,
+        num_actors=num_actors,
     )
     optimizer, lr_schedule = make_optimizer(config)
     learner = Learner(
@@ -234,13 +247,13 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
         stop_event=stop_event,
     )
 
-    def make_actor(key: jax.Array, evaluation: bool) -> Actor:
+    def make_actor(key: jax.Array, evaluation: bool, index: int = 0) -> Actor:
         return Actor(
             algorithm.make_policy(graphdef, spec, config, evaluation),
             key,
             learner.get_params,
             num_actions=spec.num_actions,
-            replay=None if evaluation else replay,
+            replay=None if evaluation else replay.adder(index),
             value_fn=None if evaluation else algorithm.make_value_fn(graphdef, config),
             device=actor_device,
             update_period=config.variable_update_period,
@@ -250,18 +263,22 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
     def make_observers() -> list[EnvLoopObserver]:
         return [ActionFractionObserver(), PolicyEntropyObserver(), *(factory() for factory in experiment.observer_factories)]
 
-    train_loop = EnvironmentLoop(
-        environment,
-        make_actor(actor_key, evaluation=False),
-        name="actor",
-        counter=counter,
-        logger=make_logger("actor"),
-        observers=make_observers(),
-        env_hook=experiment.train_env_hook,
-        stop_event=stop_event,
-        seed=experiment.seed,
-    )
-    workers = [_Worker("actor", train_loop.run, stop_event)]
+    # All actor loops share one logger (its write interval is per instance) and count into the same `actor_*` keys.
+    actor_logger = make_logger("actor")
+    workers = []
+    for index, (env, key, seed) in enumerate(zip(environments, actor_keys, actor_seeds, strict=True)):
+        train_loop = EnvironmentLoop(
+            env,
+            make_actor(key, evaluation=False, index=index),
+            name="actor",
+            counter=counter,
+            logger=actor_logger,
+            observers=make_observers(),
+            env_hook=experiment.train_env_hook,
+            stop_event=stop_event,
+            seed=seed,
+        )
+        workers.append(_Worker(f"actor-{index}" if num_actors > 1 else "actor", train_loop.run, stop_event))
 
     best_checkpointer = None
     if experiment.checkpointing is not None:
@@ -333,7 +350,8 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
                 state_checkpointer.save()
                 state_checkpointer.close()
         finally:
-            environment.close(terminate=True)  # so AsyncVectorEnv subprocesses close without waiting
+            for env in environments:
+                env.close(terminate=True)  # so AsyncVectorEnv subprocesses close without waiting
             if eval_environment is not None:
                 eval_environment.close(terminate=True)
             if writer is not None:

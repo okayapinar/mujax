@@ -7,7 +7,7 @@ import dataclasses
 import gymnasium as gym
 import pytest
 
-from mujax.algorithms import GMZConfig, MZConfig, SampledMZConfig, SMZConfig
+from mujax.algorithms import GMZConfig, SMZConfig
 
 # Networks and search small enough to compile and run within seconds.
 TINY = {
@@ -32,16 +32,8 @@ def tiny_smz() -> SMZConfig:
     )
 
 
-def tiny_mz() -> MZConfig:
-    return dataclasses.replace(MZConfig(), **TINY, dynamics_layer_sizes=(16,))
-
-
 def tiny_gmz() -> GMZConfig:
     return dataclasses.replace(GMZConfig(), **TINY, dynamics_layer_sizes=(16,), max_num_considered_actions=2)
-
-
-def tiny_sampled_mz() -> SampledMZConfig:
-    return dataclasses.replace(SampledMZConfig(), **TINY, dynamics_layer_sizes=(16,), num_sampled_actions=3)
 
 
 def make_vec_env(num_envs: int = 2) -> gym.vector.VectorEnv:
@@ -50,6 +42,6 @@ def make_vec_env(num_envs: int = 2) -> gym.vector.VectorEnv:
     )
 
 
-@pytest.fixture(params=["mz", "smz", "gmz", "sampled_mz"])
+@pytest.fixture(params=["smz", "gmz"])
 def tiny_config(request):
-    return {"mz": tiny_mz, "smz": tiny_smz, "gmz": tiny_gmz, "sampled_mz": tiny_sampled_mz}[request.param]()
+    return {"smz": tiny_smz, "gmz": tiny_gmz}[request.param]()

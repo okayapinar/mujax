@@ -156,3 +156,33 @@ def test_buffer_replay_ratio_keeps_actor_and_learner_in_step():
     # error_buffer + one chunk (14), the learner by error_buffer (4).
     assert 176 <= samples * 4 <= 194
     stop.set()
+
+
+def test_multi_actor_chunks_keep_rows_contiguous():
+    """Each actor's chunks go to its own rows, and a chunk is written only once every actor has delivered one."""
+    import jax
+
+    def marked(num_envs: int, actor: int, step: int) -> Transition:
+        t = transition(num_envs)
+        obs = np.zeros((num_envs, SPEC.obs_dim), np.float32)
+        obs[:, 0], obs[:, 1] = actor, step
+        return t._replace(observation=obs)
+
+    buffer = Buffer(SPEC, num_envs=2, max_size=200, sample_batch_size=16, sequence_length=5, num_actors=2)
+    with pytest.raises(RuntimeError):
+        buffer.add(transition(2))
+    a0, a1 = buffer.adder(0), buffer.adder(1)
+    for step in range(10):  # actor 0 is two chunks ahead; nothing lands until actor 1 catches up
+        a0.add(marked(2, 0, step))
+    assert buffer.size == 0
+    for step in range(5):
+        a1.add(marked(2, 1, step))
+    assert buffer.size == 20  # one combined chunk: 4 rows x 5 steps
+    for step in range(5, 10):
+        a1.add(marked(2, 1, step))
+    assert buffer.size == 40
+
+    batch = buffer.sample(jax.random.PRNGKey(0)).experience.observation  # (16, 5, obs_dim)
+    actor_ids, steps = np.asarray(batch[..., 0]), np.asarray(batch[..., 1])
+    assert (actor_ids == actor_ids[:, :1]).all()  # a sequence never mixes two actors
+    assert (np.diff(steps, axis=1) == 1).all()  # and walks the actor's own time axis in order

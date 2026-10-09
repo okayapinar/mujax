@@ -4,8 +4,8 @@ import numpy as np
 import rlax
 from flax import nnx
 
-from mujax.algorithms import MZConfig, SMZConfig
-from mujax.algorithms.mz import MZModel
+from mujax.algorithms import GMZConfig, SMZConfig
+from mujax.algorithms.gmz import GMZModel
 from mujax.algorithms.muzero import Embedding, SymlogInput, unimix_logits
 from mujax.algorithms.smz import SMZModel
 from mujax.types import EnvironmentSpec
@@ -20,9 +20,9 @@ def test_symlog_input_wraps_net():
 def test_models_read_observations_through_symlog():
     spec = EnvironmentSpec(obs_dim=3, num_actions=2)
     obs = jnp.array([[1e4, -2.0, 0.5]])
-    mz = MZModel(spec, MZConfig(representation_layer_sizes=(8,), embedding_dim=4, num_bins=5), rngs=nnx.Rngs(0))
-    assert isinstance(mz.representation, SymlogInput)
-    np.testing.assert_allclose(mz.representation(obs), mz.representation.net(rlax.signed_logp1(obs)), rtol=1e-6)
+    gmz = GMZModel(spec, GMZConfig(representation_layer_sizes=(8,), embedding_dim=4, num_bins=5), rngs=nnx.Rngs(0))
+    assert isinstance(gmz.representation, SymlogInput)
+    np.testing.assert_allclose(gmz.representation(obs), gmz.representation.net(rlax.signed_logp1(obs)), rtol=1e-6)
 
     smz = SMZModel(spec, SMZConfig(representation_layer_sizes=(8,), encoder_layer_sizes=(8,), embedding_dim=4, num_bins=5, codebook_size=3), rngs=nnx.Rngs(0))
     assert isinstance(smz.representation, SymlogInput) and isinstance(smz.encoder, SymlogInput)
@@ -43,7 +43,7 @@ def test_models_apply_unimix_to_policy_logits():
     spec = EnvironmentSpec(obs_dim=3, num_actions=4)
     obs = jnp.array([[1e4, -2.0, 0.5]])
     for unimix in (0.0, 0.05):
-        model = MZModel(spec, MZConfig(representation_layer_sizes=(8,), embedding_dim=4, num_bins=5, policy_unimix=unimix), rngs=nnx.Rngs(0))
+        model = GMZModel(spec, GMZConfig(representation_layer_sizes=(8,), embedding_dim=4, num_bins=5, policy_unimix=unimix), rngs=nnx.Rngs(0))
         latent = model.representation(obs)
         _, policy_logits = model.prediction(latent)
         np.testing.assert_allclose(policy_logits, unimix_logits(model.prediction.policy(latent), unimix), rtol=1e-6)
