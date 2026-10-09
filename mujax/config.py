@@ -8,10 +8,11 @@ from typing import Any, Self
 # Network size presets, `MuZeroConfig.with_size`: name -> (width, depth, embedding_dim). Every `*_layer_sizes` field
 # becomes (width,) * depth. "M" is the default of GMZ.
 SIZES: dict[str, tuple[int, int, int]] = {
+    "XS": (64, 2, 16),
     "S": (128, 2, 32),
     "M": (256, 3, 64),
-    "L": (512, 3, 128),
-    "XL": (1024, 4, 256),
+    "L": (512, 3, 64),
+    "XL": (1024, 4, 128),
 }
 
 
@@ -75,7 +76,7 @@ class MuZeroConfig:
         return dataclasses.replace(self, lr_warmup_steps=min(self.lr_warmup_steps, num_steps // 10))
 
     def with_size(self, size: str) -> Self:
-        """Sets every `*_layer_sizes` field and `embedding_dim` from the `SIZES` preset ("S", "M", "L", "XL")."""
+        """Sets every `*_layer_sizes` field and `embedding_dim` from the `SIZES` preset ("XS", "S", "M", "L", "XL")."""
         try:
             width, depth, embedding_dim = SIZES[size.upper()]
         except KeyError:

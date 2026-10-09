@@ -34,7 +34,7 @@ class Args:
     num_steps: int = 100_000  # Total learner steps
     # Total env steps (summed over envs); converted to learner steps with replay_ratio and overrides --num-steps.
     num_env_steps: int | None = None
-    size: str = "M"  # Network size preset: S, M, L, XL (S is enough for classic-control envs and searches much faster)
+    size: str = "M"  # Network size preset: XS, S, M, L, XL (S is enough for classic-control envs and searches much faster)
     seed: int = 0
     checkpoint_dir: str = "checkpoints"
     console: bool = True  # Print metrics to the terminal

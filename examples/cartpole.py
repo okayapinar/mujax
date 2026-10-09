@@ -1,4 +1,4 @@
-"""Train Gumbel MuZero on CartPole and keep the best checkpoint.
+"""Train Gumbel MuZero and keep the best checkpoint.
 
 python examples/cartpole.py
 """
@@ -9,13 +9,14 @@ import gymnasium as gym
 
 from mujax import ExperimentConfig, GMZConfig, create_writer, run_experiment
 
+ENV_ID = "Acrobot-v1"  # Acrobot-v1, MountainCar-v0
 NUM_STEPS = 20_000
 
 
 def make_env(num_envs: int) -> gym.vector.VectorEnv:
     # SAME_STEP autoreset is required: the final observation of a truncated episode is read from `info["final_obs"]`.
     return gym.make_vec(
-        "CartPole-v1",
+        ENV_ID,
         num_envs=num_envs,
         vectorization_mode="sync",
         vector_kwargs={"autoreset_mode": gym.vector.AutoresetMode.SAME_STEP},
