@@ -23,9 +23,6 @@ class SMZConfig(PUCTConfig):
     num_simulations: int = 32
     batch_size: int = 2048
     learning_rate: float = 1e-3
-    lr_end_value: float = 3e-4
-    lr_warmup_steps: int = 3000
-    lr_decay_steps: int = 97_000
 
     temperature_decay_steps: int = 100_000
 

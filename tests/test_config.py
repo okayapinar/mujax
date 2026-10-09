@@ -21,8 +21,8 @@ def test_from_dict_ignores_unknown_fields():
 def test_with_num_steps(cls):
     config = cls().with_num_steps(1000)
     assert config.lr_warmup_steps == 100
-    assert config.lr_warmup_steps + config.lr_decay_steps == 1000
     assert config.temperature_decay_steps == 1000
+    assert cls(lr_warmup_steps=50).with_num_steps(1000).lr_warmup_steps == 50
 
 
 def test_algorithm_for():

@@ -25,7 +25,7 @@ AgentConfig = tyro.conf.OmitSubcommandPrefixes[
 class Args:
     """MuZero / Stochastic MuZero / Gumbel MuZero / Sampled MuZero training on Gymnasium environments.
 
-    Example: `mujax --env CartPole-v1 gmz --num-simulations 32`. lr_decay_steps and
+    Example: `mujax --env CartPole-v1 gmz --num-simulations 32`. lr_warmup_steps and
     temperature_decay_steps are scaled relative to the number of learner steps.
     """
 

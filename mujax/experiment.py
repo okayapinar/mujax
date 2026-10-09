@@ -146,9 +146,7 @@ def setup_devices() -> tuple[jax.Device, jax.Device]:
 
 
 def make_optimizer(c: MuZeroConfig) -> tuple[optax.GradientTransformation, optax.Schedule]:
-    lr_schedule = optax.warmup_cosine_decay_schedule(
-        init_value=c.lr_init_value, peak_value=c.learning_rate, warmup_steps=c.lr_warmup_steps, decay_steps=c.lr_decay_steps, end_value=c.lr_end_value
-    )
+    lr_schedule = optax.warmup_constant_schedule(init_value=0.0, peak_value=c.learning_rate, warmup_steps=c.lr_warmup_steps)
     adamw = optax.adamw(lr_schedule, b1=c.adam_b1, b2=c.adam_b2, weight_decay=c.weight_decay)
     optimizer = optax.chain(optax.clip_by_global_norm(c.max_grad_norm), adamw) if c.max_grad_norm > 0 else adamw
     return optimizer, lr_schedule
