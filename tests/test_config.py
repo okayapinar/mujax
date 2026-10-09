@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 
 from mujax import GMZ, MZ, SMZ, GMZConfig, MuZeroConfig, MZConfig, SMZConfig, algorithm_for
@@ -29,3 +31,26 @@ def test_algorithm_for():
     assert algorithm_for(GMZConfig()) is GMZ
     with pytest.raises(ValueError):
         algorithm_for(MuZeroConfig())
+
+
+@pytest.mark.parametrize("cls", [MZConfig, SMZConfig, GMZConfig])
+def test_with_size(cls):
+    config = cls().with_size("l")
+    assert config.embedding_dim == 128
+    for field in dataclasses.fields(config):
+        if field.name.endswith("_layer_sizes"):
+            assert getattr(config, field.name) == (512, 512, 512), field.name
+    with pytest.raises(ValueError):
+        cls().with_size("huge")
+
+
+def test_size_m_is_the_mz_default():
+    assert GMZConfig().with_size("M") == GMZConfig()
+    assert MZConfig().with_size("M") == MZConfig()
+
+
+def test_num_learner_steps():
+    config = GMZConfig(batch_size=256, replay_ratio=2.0)
+    assert config.num_learner_steps(1_000_000) == 1_000_000 * 2 // 256
+    with pytest.raises(ValueError):
+        dataclasses.replace(config, replay_ratio=None).num_learner_steps(1000)

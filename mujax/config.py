@@ -5,6 +5,15 @@ from __future__ import annotations
 import dataclasses
 from typing import Any, Self
 
+# Network size presets, `MuZeroConfig.with_size`: name -> (width, depth, embedding_dim). Every `*_layer_sizes` field
+# becomes (width,) * depth. "M" is the default of MZ / GMZ / SampledMZ.
+SIZES: dict[str, tuple[int, int, int]] = {
+    "S": (128, 2, 32),
+    "M": (256, 3, 64),
+    "L": (512, 3, 128),
+    "XL": (1024, 4, 256),
+}
+
 
 @dataclasses.dataclass
 class MuZeroConfig:
@@ -32,6 +41,7 @@ class MuZeroConfig:
     min_replay_size: int = 10_000  # Transitions (all envs) in replay before the learner starts; capped at the buffer size
     replay_period: int = 1
     reanalyze_ratio: float = 0.5
+    replay_ratio: float | None = 2.0
 
     # Optimization
     batch_size: int = 1024
@@ -66,6 +76,21 @@ class MuZeroConfig:
         """Adjusts the schedules (LR warmup/cosine) to the total number of learner steps."""
         warmup = min(self.lr_warmup_steps, num_steps // 10)
         return dataclasses.replace(self, lr_warmup_steps=warmup, lr_decay_steps=num_steps - warmup)
+
+    def with_size(self, size: str) -> Self:
+        """Sets every `*_layer_sizes` field and `embedding_dim` from the `SIZES` preset ("S", "M", "L", "XL")."""
+        try:
+            width, depth, embedding_dim = SIZES[size.upper()]
+        except KeyError:
+            raise ValueError(f"Bilinmeyen boyut {size!r}; secenekler: {', '.join(SIZES)}") from None
+        layers = {f.name: (width,) * depth for f in dataclasses.fields(self) if f.name.endswith("_layer_sizes")}
+        return dataclasses.replace(self, embedding_dim=embedding_dim, **layers)
+
+    def num_learner_steps(self, num_actor_steps: int) -> int:
+        """Learner steps that `replay_ratio` allows for a budget of `num_actor_steps` environment steps."""
+        if self.replay_ratio is None:
+            raise ValueError("replay_ratio None iken aktor adimi butcesi learner adimina cevrilemez")
+        return max(1, int(num_actor_steps * self.replay_ratio / self.batch_size))
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-serializable dict (tuples become lists)."""

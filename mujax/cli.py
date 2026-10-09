@@ -26,13 +26,16 @@ class Args:
     """MuZero / Stochastic MuZero / Gumbel MuZero / Sampled MuZero training on Gymnasium environments.
 
     Example: `mujax --env CartPole-v1 gmz --num-simulations 32`. lr_decay_steps and
-    temperature_decay_steps are scaled relative to --num-steps.
+    temperature_decay_steps are scaled relative to the number of learner steps.
     """
 
     agent: AgentConfig
     env: str = "CartPole-v1"  # Gymnasium env id
     num_envs: int = 16
     num_steps: int = 100_000  # Total learner steps
+    # Total env steps (summed over envs); converted to learner steps with replay_ratio and overrides --num-steps.
+    num_env_steps: int | None = None
+    size: str = "M"  # Network size preset: S, M, L, XL
     seed: int = 0
     checkpoint_dir: str = "checkpoints"
     console: bool = True  # Print metrics to the terminal
@@ -49,7 +52,9 @@ def main(argv: list[str] | None = None) -> None:
     args = tyro.cli(Args, args=argv)
 
     algo = algorithm_for(args.agent).name
-    config = args.agent.with_num_steps(args.num_steps)
+    config = args.agent.with_size(args.size)
+    num_steps = args.num_steps if args.num_env_steps is None else config.num_learner_steps(args.num_env_steps)
+    config = config.with_num_steps(num_steps)
 
     run_name = f"{algo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     writer = create_writer(
@@ -63,10 +68,10 @@ def main(argv: list[str] | None = None) -> None:
         config=config,
         environment_factory=lambda seed: make_vec_env(args.env, args.num_envs),
         eval_environment_factory=lambda seed: make_vec_env(args.env, 1),
-        max_num_learner_steps=args.num_steps,
+        max_num_learner_steps=num_steps,
         seed=args.seed,
         writer=writer,
-        hparams={"env": args.env, "num_envs": args.num_envs},
+        hparams={"env": args.env, "num_envs": args.num_envs, "size": args.size},
         checkpointing=CheckpointingConfig(directory=os.path.join(args.checkpoint_dir, run_name)),
         checkpoint_extra={"env_id": args.env},
     )

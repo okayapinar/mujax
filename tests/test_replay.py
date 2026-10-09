@@ -75,3 +75,84 @@ def test_min_size_is_capped_at_max_size():
     for _ in range(10):
         buffer.add(transition(2))
     assert buffer.sample(jax.random.PRNGKey(0)) is not None
+
+
+def test_rate_limiter_blocks_the_side_that_is_ahead():
+    import threading
+
+    from mujax.replay import SampleToInsertRatio
+
+    limiter = SampleToInsertRatio(2.0, min_size=10, error_buffer=4.0)
+    limiter.insert(10)  # reaches min_size: error 0
+    limiter.insert(2)  # error 4: at the buffer, the next call still passes (the check happens before counting)
+    limiter.insert(2)  # error 8
+    assert limiter.error == 8.0
+
+    # Past the buffer: the next insert waits until the learner samples enough.
+    done = threading.Event()
+    threading.Thread(target=lambda: (limiter.insert(2), done.set()), daemon=True).start()
+    assert not done.wait(0.2)
+    limiter.sample(8)  # error 0 -> the insert goes through -> error 4
+    assert done.wait(2.0)
+    assert limiter.error == 4.0
+
+    # Symmetric: sampling past the buffer waits for an insert.
+    limiter.sample(4)  # 0
+    limiter.sample(4)  # -4
+    limiter.sample(4)  # -8
+    done.clear()
+    threading.Thread(target=lambda: (limiter.sample(4), done.set()), daemon=True).start()
+    assert not done.wait(0.2)
+    limiter.insert(4)  # 0 -> the sample goes through -> -4
+    assert done.wait(2.0)
+    assert limiter.error == -4.0
+
+
+def test_rate_limiter_releases_waiters_on_stop():
+    import threading
+
+    from mujax.replay import SampleToInsertRatio
+
+    stop = threading.Event()
+    limiter = SampleToInsertRatio(1.0, min_size=0, error_buffer=0.0, stop_event=stop)
+    limiter.insert(5)
+    done = threading.Event()
+    threading.Thread(target=lambda: (limiter.insert(5), done.set()), daemon=True).start()
+    assert not done.wait(0.2)
+    stop.set()
+    assert done.wait(2.0)
+
+
+def test_buffer_replay_ratio_keeps_actor_and_learner_in_step():
+    """With replay_ratio the actor waits for the learner once it is ahead, and the learner never deadlocks."""
+    import threading
+
+    import jax
+
+    stop = threading.Event()
+    # min_size 10 (one chunk over 2 envs), batch 4, ratio 1: error_buffer = max(4, 0.1 * 10) = 4 samples.
+    buffer = Buffer(SPEC, num_envs=2, max_size=200, sample_batch_size=4, sequence_length=5, replay_ratio=1.0, stop_event=stop)
+    added = 0
+
+    def actor():
+        nonlocal added
+        for _ in range(100):
+            buffer.add(transition(2))
+            added += 1
+
+    thread = threading.Thread(target=actor, daemon=True)
+    thread.start()
+    thread.join(1.0)
+    # Two chunks (20 transitions) are in, the third flush (at the 15th add) waits: 10 past min_size, nothing sampled.
+    assert thread.is_alive() and added == 14
+
+    key = jax.random.PRNGKey(0)
+    samples = 0
+    while thread.is_alive():
+        assert buffer.sample(key) is not None
+        samples += 1
+        thread.join(0.01)
+    # 200 transitions, counted from min_size 10 -> ~190 sampled sequences; the actor may lead by
+    # error_buffer + one chunk (14), the learner by error_buffer (4).
+    assert 176 <= samples * 4 <= 194
+    stop.set()

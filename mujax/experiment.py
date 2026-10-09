@@ -50,6 +50,10 @@ class ExperimentConfig:
 
     Attributes:
         config: Agent hyperparameters.
+        max_num_learner_steps / max_num_actor_steps: the run stops when either budget is reached (actor steps are
+            summed over the training envs). With `config.replay_ratio` the two are tied:
+            learner_steps ~= actor_steps * replay_ratio / batch_size, see `MuZeroConfig.num_learner_steps`.
+            Both None: runs until early stopping or Ctrl-C.
         algorithm: if None, chosen from the config class (SMZConfig -> SMZ, GMZConfig -> GMZ).
         environment_factory: seed -> `gym.vector.VectorEnv` for training.
         eval_environment_factory: seed -> `gym.vector.VectorEnv` for evaluation (usually
@@ -66,7 +70,8 @@ class ExperimentConfig:
 
     config: MuZeroConfig
     environment_factory: Callable[[int], gym.vector.VectorEnv]
-    max_num_learner_steps: int
+    max_num_learner_steps: int | None = None
+    max_num_actor_steps: int | None = None
     algorithm: Algorithm | None = None
     eval_environment_factory: Callable[[int], gym.vector.VectorEnv] | None = None
     seed: int = 0
@@ -199,6 +204,8 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
         sample_batch_size=config.batch_size,
         sequence_length=config.sequence_length,
         period=config.replay_period,
+        replay_ratio=config.replay_ratio,
+        stop_event=stop_event,
     )
     optimizer, lr_schedule = make_optimizer(config)
     learner = Learner(
@@ -296,6 +303,11 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
         for sig in (signal.SIGINT, signal.SIGTERM):
             previous_handlers[sig] = signal.signal(sig, request_stop)
 
+    def budget_reached() -> bool:
+        if experiment.max_num_learner_steps is not None and learner.learn_steps >= experiment.max_num_learner_steps:
+            return True
+        return experiment.max_num_actor_steps is not None and counter.get().get("actor_steps", 0) >= experiment.max_num_actor_steps
+
     # Learner loop (main thread)
     for worker in workers:
         worker.start()
@@ -304,7 +316,7 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
     )
     try:
         for batch in dataset:
-            if learner.learn_steps >= experiment.max_num_learner_steps or stop_event.is_set():
+            if budget_reached() or stop_event.is_set():
                 break
             learner.step(batch)
             progress.update(1)

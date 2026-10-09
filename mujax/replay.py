@@ -13,6 +13,53 @@ import psutil
 from mujax.types import EnvironmentSpec, Transition
 
 MAX_AUTO_SIZE = 5_000_000
+_RATIO_TOLERANCE = 0.1  # SampleToInsertRatio slack as a fraction of the samples expected at min_size (Acme's default)
+_WAIT_SEC = 0.05  # how often a blocked insert/sample re-checks the stop event
+
+
+class SampleToInsertRatio:
+    """Keeps `samples ~= samples_per_insert * (inserts - min_size)`; Reverb's rate limiter of the same name.
+
+    `insert` blocks while the actor is too far ahead (error > error_buffer), `sample` blocks while the learner is
+    too far ahead (error < -error_buffer); the two conditions are disjoint, so they cannot block each other.
+    Counting starts at `min_size`, so the first samples are allowed as soon as the buffer is ready to sample.
+    Waiters re-check `stop_event` periodically and return without blocking once it is set.
+    """
+
+    def __init__(self, samples_per_insert: float, *, min_size: int, error_buffer: float, stop_event: threading.Event | None = None):
+        if samples_per_insert <= 0:
+            raise ValueError(f"samples_per_insert pozitif olmali, gelen: {samples_per_insert}")
+        self._ratio = float(samples_per_insert)
+        self._min_size = int(min_size)
+        self._error_buffer = float(error_buffer)
+        self._stop_event = stop_event
+        self._inserts = 0
+        self._samples = 0
+        self._condition = threading.Condition()
+
+    @property
+    def error(self) -> float:
+        """Samples expected so far minus samples taken; positive: the actor is ahead."""
+        return self._ratio * (self._inserts - self._min_size) - self._samples
+
+    def insert(self, num_items: int) -> None:
+        self._wait(lambda: self.error <= self._error_buffer)
+        with self._condition:
+            self._inserts += int(num_items)
+            self._condition.notify_all()
+
+    def sample(self, num_items: int) -> None:
+        self._wait(lambda: self.error >= -self._error_buffer)
+        with self._condition:
+            self._samples += int(num_items)
+            self._condition.notify_all()
+
+    def _wait(self, allowed) -> None:
+        with self._condition:
+            while not allowed():
+                if self._stop_event is not None and self._stop_event.is_set():
+                    return
+                self._condition.wait(_WAIT_SEC)
 
 
 def _item_template(spec: EnvironmentSpec) -> Transition:
@@ -51,6 +98,9 @@ class Buffer:
     `add` is called from the actor thread, `sample` from the learner thread. `add` donates the old state
     (to avoid copying the whole buffer), so every place that reads the state holds the lock. Fill level
     is tracked with a Python counter, so `size` / `can_sample` do not sync with the device.
+
+    With `replay_ratio` (sequences sampled per transition inserted) a `SampleToInsertRatio` limiter makes `add`
+    and `sample` wait for each other; `stop_event` releases the waiters at the end of the run.
     """
 
     def __init__(
@@ -63,11 +113,14 @@ class Buffer:
         sequence_length: int,
         period: int = 1,
         min_size: int = 0,
+        replay_ratio: float | None = None,
+        stop_event: threading.Event | None = None,
     ):
         if not max_size or max_size <= 0:
             max_size = max_size_from_memory(spec, num_envs)
         print(f"replay max_size={max_size} (~{max_size * item_bytes(spec) / 1024**3:.1f} GB)")
         self._num_envs = num_envs
+        self._sample_batch_size = sample_batch_size
         self._max_length = max_size // num_envs
         self._buffer = flashbax.make_trajectory_buffer(
             add_batch_size=num_envs,
@@ -86,6 +139,12 @@ class Buffer:
         self._added_length = 0  # total steps written to each env row
         # Per-row steps needed before sampling; at least one chunk (flashbax can_sample), at most a full buffer.
         self._min_length = min(max(-(-min_size // num_envs), sequence_length), self._max_length)
+        self._limiter = None
+        if replay_ratio is not None:
+            # Inserts are counted when a chunk is written, so "actor ahead" implies the buffer is ready to sample.
+            min_size_to_sample = self._min_length * num_envs
+            error_buffer = max(float(sample_batch_size), _RATIO_TOLERANCE * replay_ratio * min_size_to_sample)
+            self._limiter = SampleToInsertRatio(replay_ratio, min_size=min_size_to_sample, error_buffer=error_buffer, stop_event=stop_event)
 
     def add(self, transition: Transition) -> None:
         """Adds a single step shaped (num_envs, ...); writes to the buffer once a chunk is full."""
@@ -94,15 +153,20 @@ class Buffer:
             return
         chunk = jax.tree.map(lambda *steps: np.stack(steps, axis=1), *self._chunk)  # (num_envs, T, ...)
         self._chunk = []
+        if self._limiter is not None:
+            self._limiter.insert(self._chunk_size * self._num_envs)
         with self._lock:
             self._state = self._add(self._state, chunk)
             self._added_length += self._chunk_size
 
     def sample(self, key: jax.Array):
-        """Returns None if no sample is available (buffer not yet full enough)."""
+        """Returns None if no sample is available (buffer not yet full enough); may wait for the actor (`replay_ratio`)."""
         with self._lock:
             if self._added_length < self._min_length:
                 return None
+        if self._limiter is not None:
+            self._limiter.sample(self._sample_batch_size)
+        with self._lock:
             return self._sample(self._state, key)
 
     @property
