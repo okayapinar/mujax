@@ -76,14 +76,14 @@ class SymlogInput(nnx.Module):
 
 
 class LayerNormMLP(nnx.Module):
-    """MLP whose layers are Linear -> LayerNorm -> ReLU."""
+    """MLP whose layers are Linear -> LayerNorm -> SiLU."""
 
     def __init__(self, in_features: int, layer_sizes: Sequence[int], *, rngs: nnx.Rngs):
         layers = []
         for out_features in layer_sizes:
             layers.append(nnx.Linear(in_features, out_features, rngs=rngs))
             layers.append(nnx.LayerNorm(out_features, rngs=rngs))
-            layers.append(nnx.relu)
+            layers.append(nnx.silu)
             in_features = out_features
         self.layers = nnx.Sequential(*layers)
         self.out_features = in_features
