@@ -61,8 +61,7 @@ class MuZeroConfig:
     prediction_layer_sizes: tuple[int, ...] = (256, 256, 256)
     embedding_dim: int = 64
 
-    # How many select_action calls between actor pulls of the learner params
-    variable_update_period: int = 1
+    variable_update_period: int = 100
 
     @property
     def discount(self) -> float:
