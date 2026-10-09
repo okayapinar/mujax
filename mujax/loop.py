@@ -3,7 +3,6 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
 
 import gymnasium as gym
 import numpy as np
@@ -13,7 +12,6 @@ from mujax.loggers import Logger
 from mujax.observers import EnvLoopObserver
 from mujax.types import TimeStep
 
-EnvHook = Callable[[Any, int], None]
 EpisodeCallback = Callable[[dict[str, float]], None]
 
 
@@ -43,8 +41,6 @@ class EnvironmentLoop:
 
     Args:
         name: prefix of the counter keys (`<name>_steps`, `<name>_episodes`).
-        env_hook: `env_hook(env, learner_steps)`; called before every step. For modifying the env during training
-            (e.g. a data window).
         episode_callback: Each episode result (counts included) is passed to this before being written to the logger;
             it may add new keys to the result.
         seed: passed to the first `env.reset`; sub-env i gets `seed + i`, later episodes continue from those RNGs.
@@ -61,7 +57,6 @@ class EnvironmentLoop:
         logger: Logger | None = None,
         observers: Sequence[EnvLoopObserver] = (),
         episode_callback: EpisodeCallback | None = None,
-        env_hook: EnvHook | None = None,
         stop_event: threading.Event | None = None,
         seed: int | None = None,
     ) -> None:
@@ -77,18 +72,15 @@ class EnvironmentLoop:
         self._logger = logger
         self._observers = list(observers)
         self._episode_callback = episode_callback
-        self._env_hook = env_hook
         self._stop_event = stop_event or threading.Event()
         self._num_envs = int(environment.num_envs)
         self._seed = seed
 
-    def run(self, num_episodes: int | None = None) -> None:
-        """Runs until `stop_event` is set or `num_episodes` episodes in total have finished."""
+    def run(self) -> None:
+        """Runs until `stop_event` is set."""
         observation = self._start()
-        episodes = 0
-        while not self._stop_event.is_set() and (num_episodes is None or episodes < num_episodes):
-            observation, done = self._step(observation)
-            episodes += int(done.sum())
+        while not self._stop_event.is_set():
+            observation = self._step(observation)
 
     def _start(self) -> np.ndarray:
         observation, info = self._env.reset(seed=self._seed)
@@ -101,9 +93,7 @@ class EnvironmentLoop:
         self._start_times = np.full(self._num_envs, time.time())
         return observation
 
-    def _step(self, observation: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        if self._env_hook is not None:
-            self._env_hook(self._env, self._counter.get().get("learner_steps", 0))
+    def _step(self, observation: np.ndarray) -> np.ndarray:
         action = self._actor.select_action(observation)
         # SAME_STEP: next_observation of finished envs is already the first observation of the new episode.
         next_observation, reward, terminated, truncated, info = self._env.step(action)
@@ -118,7 +108,7 @@ class EnvironmentLoop:
         counts = self._counter.increment(**{f"{self._name}_steps": self._num_envs, f"{self._name}_episodes": int(done.sum())})
         for index in np.flatnonzero(done):
             self._finish_episode(int(index), counts)
-        return next_observation, done
+        return next_observation
 
     def _finish_episode(self, index: int, counts: Mapping[str, int]) -> None:
         now = time.time()

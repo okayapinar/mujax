@@ -11,14 +11,11 @@ ALGORITHMS: dict[str, Algorithm] = {SMZ.name: SMZ, GMZ.name: GMZ}
 
 
 def algorithm_for(config: MuZeroConfig) -> Algorithm:
-    """Algorithm by config class: an exact class match first, then a subclass match."""
-    for algorithm in ALGORITHMS.values():
-        if type(config) is algorithm.config_cls:
-            return algorithm
+    """The algorithm whose config class `config` is an instance of."""
     for algorithm in ALGORITHMS.values():
         if isinstance(config, algorithm.config_cls):
             return algorithm
-    raise ValueError(f"{type(config).__name__} icin algoritma bulunamadi; ExperimentConfig.algorithm ver.")
+    raise ValueError(f"{type(config).__name__} icin algoritma bulunamadi")
 
 
 __all__ = ["ALGORITHMS", "GMZ", "SMZ", "GMZConfig", "SMZConfig", "algorithm_for"]

@@ -9,11 +9,9 @@ import flashbax
 import jax
 import jax.numpy as jnp
 import numpy as np
-import psutil
 
 from mujax.types import EnvironmentSpec, Transition
 
-MAX_AUTO_SIZE = 5_000_000
 _RATIO_TOLERANCE = 0.1  # SampleToInsertRatio slack as a fraction of the samples expected at min_size (Acme's default)
 _WAIT_SEC = 0.05  # how often a blocked insert/sample re-checks the stop event
 
@@ -82,14 +80,6 @@ def item_bytes(spec: EnvironmentSpec) -> int:
     return sum(int(x.nbytes) for x in jax.tree.leaves(_item_template(spec)))
 
 
-def max_size_from_memory(spec: EnvironmentSpec, num_envs: int) -> int:
-    """Number of steps that fit in the smaller of half the free RAM and one eighth of total RAM (rounded to a multiple of num_envs)."""
-    memory = psutil.virtual_memory()
-    budget = min(memory.available // 2, memory.total // 8)
-    capacity = (budget // max(item_bytes(spec), 1) // num_envs) * num_envs
-    return min(max(capacity, num_envs), MAX_AUTO_SIZE)
-
-
 class Adder:
     """One actor's write handle: collects steps shaped (num_envs, ...) and hands full chunks to the buffer.
 
@@ -117,11 +107,11 @@ class Buffer:
     `sample` returns None until `min_size` transitions (summed over envs) have been added, so the learner
     doesn't start by overfitting a handful of early steps.
 
-    `add` is called from the actor thread, `sample` from the learner thread. `add` donates the old state
-    (to avoid copying the whole buffer), so every place that reads the state holds the lock. Fill level
-    is tracked with a Python counter, so `size` / `can_sample` do not sync with the device.
+    Actor threads write through `adder(i)`, the learner thread calls `sample`. The flashbax add donates the old
+    state (to avoid copying the whole buffer), so every place that reads the state holds the lock. Fill level
+    is tracked with a Python counter, so `size` does not sync with the device.
 
-    With `num_actors > 1` each actor thread writes through its own `adder(i)`; the buffer has
+    With `num_actors > 1` each actor thread has its own `adder(i)`; the buffer has
     `num_actors * num_envs` rows and a chunk is written only once every actor has delivered one, so the
     chunks of a row stay contiguous in time (a sequence never crosses from one actor's trajectory into
     another's). Chunks are concatenated in actor order; actor i owns rows i*num_envs..(i+1)*num_envs-1.
@@ -135,7 +125,7 @@ class Buffer:
         spec: EnvironmentSpec,
         *,
         num_envs: int,
-        max_size: int | None,
+        max_size: int,
         sample_batch_size: int,
         sequence_length: int,
         period: int = 1,
@@ -147,8 +137,6 @@ class Buffer:
         if num_actors < 1:
             raise ValueError(f"num_actors pozitif olmali, gelen: {num_actors}")
         num_rows = num_envs * num_actors
-        if not max_size or max_size <= 0:
-            max_size = max_size_from_memory(spec, num_rows)
         print(f"replay max_size={max_size} (~{max_size * item_bytes(spec) / 1024**3:.1f} GB)")
         self._num_envs = num_envs
         self._num_rows = num_rows
@@ -165,13 +153,14 @@ class Buffer:
         self._add = jax.jit(self._buffer.add, donate_argnums=0)
         self._sample = jax.jit(self._buffer.sample)
         self._state = self._buffer.init(_item_template(spec))
-        self._lock = threading.Lock()  # guards `_state` and `_added_length`
+        self._lock = threading.Lock()  # guards `_state` and the counters below
         # Serializes chunk writes (so chunks land on the time axis in delivery order) and the per-actor queues.
         self._write_lock = threading.Lock()
         self.chunk_size = sequence_length
         self._adders = [Adder(self, index) for index in range(num_actors)]
         self._pending: list[collections.deque] = [collections.deque() for _ in range(num_actors)]
         self._added_length = 0  # total steps written to each env row
+        self._num_sampled = 0  # sequences handed to the learner
         # Per-row steps needed before sampling; at least one chunk (flashbax can_sample), at most a full buffer.
         self._min_length = min(max(-(-min_size // num_rows), sequence_length), self._max_length)
         self._limiter = None
@@ -181,19 +170,9 @@ class Buffer:
             error_buffer = max(float(sample_batch_size), _RATIO_TOLERANCE * replay_ratio * min_size_to_sample)
             self._limiter = SampleToInsertRatio(replay_ratio, min_size=min_size_to_sample, error_buffer=error_buffer, stop_event=stop_event)
 
-    @property
-    def num_actors(self) -> int:
-        return len(self._adders)
-
     def adder(self, index: int) -> Adder:
         """The write handle of actor `index` (0 <= index < num_actors)."""
         return self._adders[index]
-
-    def add(self, transition: Transition) -> None:
-        """Single-actor shortcut for `adder(0).add`."""
-        if self.num_actors != 1:
-            raise RuntimeError(f"num_actors={self.num_actors}: her aktor kendi `adder(i)` uzerinden yazmali")
-        self._adders[0].add(transition)
 
     def write(self, index: int, chunk: Transition) -> None:
         """Queues actor `index`'s chunk shaped (num_envs, T, ...) and writes one combined chunk once every actor has one.
@@ -221,16 +200,19 @@ class Buffer:
         if self._limiter is not None:
             self._limiter.sample(self._sample_batch_size)
         with self._lock:
+            self._num_sampled += self._sample_batch_size
             return self._sample(self._state, key)
 
     @property
     def size(self) -> int:
-        return self._length * self._num_rows
+        return min(self._added_length, self._max_length) * self._num_rows
 
-    @property
-    def fill_ratio(self) -> float:
-        return self._length / self._max_length
-
-    @property
-    def _length(self) -> int:
-        return min(self._added_length, self._max_length)
+    def metrics(self) -> dict[str, float]:
+        """Fill level and the realized replay ratio (sequences sampled per transition inserted)."""
+        with self._lock:
+            inserted = self._added_length * self._num_rows
+            return {
+                "buffer_size": self.size,
+                "buffer_fill_ratio": min(self._added_length, self._max_length) / self._max_length,
+                "replay_ratio": self._num_sampled / max(1, inserted),
+            }

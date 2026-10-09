@@ -1,10 +1,9 @@
-"""Shared pieces of the MuZero family: value support, network blocks, the loss, and PUCT exploration."""
+"""Shared pieces of the MuZero family: value support, network blocks and the loss."""
 
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import Callable, Sequence
-from typing import Any, NamedTuple, Self
+from typing import Any, NamedTuple
 
 import distrax
 import jax
@@ -330,42 +329,3 @@ def loss(
         **extras,
     }
     return total, metrics
-
-
-@dataclasses.dataclass
-class PUCTConfig(MuZeroConfig):
-    """MuZeroConfig + exploration of the PUCT search (`mctx.muzero_policy`, `mctx.stochastic_muzero_policy`)."""
-
-    temperature_decay_steps: int = 400_000
-    dirichlet_fraction: float = 0.1
-    dirichlet_alpha: float | None = None  # If None, 1/sqrt(num_actions)
-    pb_c_init: float = 1.25
-    pb_c_base: float = 19652.0
-
-    def with_num_steps(self, num_steps: int) -> Self:
-        return dataclasses.replace(super().with_num_steps(num_steps), temperature_decay_steps=num_steps)
-
-
-def puct_exploration(config: PUCTConfig, num_actions: int, evaluation: bool) -> Callable[[Any], dict[str, Any]]:
-    """learner_steps -> kwargs for the mctx PUCT policies. Evaluation turns off temperature and noise."""
-    if config.dirichlet_alpha is None:
-        dirichlet_alpha = 1.0 / num_actions**0.5
-    else:
-        dirichlet_alpha = config.dirichlet_alpha
-    half = int(0.5 * config.temperature_decay_steps)
-    three_quarters = int(0.75 * config.temperature_decay_steps)
-
-    def temperature(learner_steps):
-        # 1.0, then 0.5, then 0.25.
-        return jnp.where(learner_steps < half, 1.0, jnp.where(learner_steps < three_quarters, 0.5, 0.25))
-
-    def kwargs(learner_steps):
-        return {
-            "temperature": 0.0 if evaluation else temperature(learner_steps),
-            "dirichlet_fraction": 0.0 if evaluation else config.dirichlet_fraction,
-            "dirichlet_alpha": dirichlet_alpha,
-            "pb_c_init": config.pb_c_init,
-            "pb_c_base": config.pb_c_base,
-        }
-
-    return kwargs

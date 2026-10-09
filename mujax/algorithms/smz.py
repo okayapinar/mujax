@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from typing import Any, Self
+
 import distrax
 import jax
 import jax.numpy as jnp
@@ -12,19 +14,25 @@ from flax import nnx
 
 from mujax.algorithm import Algorithm, SearchPolicy
 from mujax.algorithms import muzero
-from mujax.algorithms.muzero import Embedding, Head, Prediction, PUCTConfig, Support, SymlogInput, Targets
+from mujax.algorithms.muzero import Embedding, Head, Prediction, Support, SymlogInput, Targets
+from mujax.config import MuZeroConfig
 from mujax.types import EnvironmentSpec, SearchOutput
 
 
 @dataclasses.dataclass
-class SMZConfig(PUCTConfig):
+class SMZConfig(MuZeroConfig):
     """Stochastic MuZero hyperparameters."""
 
     num_simulations: int = 32
     batch_size: int = 2048
     learning_rate: float = 1e-3
 
-    temperature_decay_steps: int = 100_000
+    # PUCT exploration (`mctx.stochastic_muzero_policy`)
+    temperature_decay_steps: int = 100_000  # temperature 1.0 -> 0.5 at half -> 0.25 at three quarters
+    dirichlet_fraction: float = 0.1
+    dirichlet_alpha: float | None = None  # If None, 1/sqrt(num_actions)
+    pb_c_init: float = 1.25
+    pb_c_base: float = 19652.0
 
     # Networks
     representation_layer_sizes: tuple[int, ...] = (128, 128)
@@ -34,6 +42,28 @@ class SMZConfig(PUCTConfig):
     chance_layer_sizes: tuple[int, ...] = (128, 128)
     codebook_size: int = 32
     vqvae_beta: float = 0.25  # commitment loss weight
+
+    def with_num_steps(self, num_steps: int) -> Self:
+        return dataclasses.replace(super().with_num_steps(num_steps), temperature_decay_steps=num_steps)
+
+
+def puct_exploration(config: SMZConfig, num_actions: int, evaluation: bool) -> Callable[[Any], dict[str, Any]]:
+    """learner_steps -> exploration kwargs of the mctx PUCT policy. Evaluation turns off temperature and noise."""
+    dirichlet_alpha = 1.0 / num_actions**0.5 if config.dirichlet_alpha is None else config.dirichlet_alpha
+    half = int(0.5 * config.temperature_decay_steps)
+    three_quarters = int(0.75 * config.temperature_decay_steps)
+
+    def kwargs(learner_steps):
+        temperature = jnp.where(learner_steps < half, 1.0, jnp.where(learner_steps < three_quarters, 0.5, 0.25))
+        return {
+            "temperature": 0.0 if evaluation else temperature,
+            "dirichlet_fraction": 0.0 if evaluation else config.dirichlet_fraction,
+            "dirichlet_alpha": dirichlet_alpha,
+            "pb_c_init": config.pb_c_init,
+            "pb_c_base": config.pb_c_base,
+        }
+
+    return kwargs
 
 
 class Decision(nnx.Module):
@@ -76,7 +106,7 @@ def make_policy(graphdef: nnx.GraphDef, spec: EnvironmentSpec, config: SMZConfig
     """Batched Stochastic MuZero search. `evaluation=True` turns off temperature and Dirichlet noise."""
     support = Support.from_config(config)
     codebook_size = config.codebook_size
-    exploration = muzero.puct_exploration(config, spec.num_actions, evaluation)
+    exploration = puct_exploration(config, spec.num_actions, evaluation)
 
     def decision_fn(params, key, action, latent):
         afterstate, chance_logits, afterstate_value_logits = nnx.merge(graphdef, params).decision(latent, action)

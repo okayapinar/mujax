@@ -21,7 +21,7 @@ def test_run_and_load(tiny_config, tmp_path):
         max_num_learner_steps=5,
         evaluation=EvaluationConfig(),
         checkpointing=CheckpointingConfig(directory=str(tmp_path), every_sec=0, upload_to_wandb=False),
-        checkpoint_extra={"env_id": "CartPole-v1"},
+        extra={"env_id": "CartPole-v1"},
     )
     learner = run_experiment(experiment)
     assert learner.learn_steps == 5
@@ -63,16 +63,6 @@ def test_cli(tmp_path, monkeypatch):
         "--max-replay-size", "2048", "--min-replay-size", "0", "--num-bins", "21",
     ])  # fmt: skip
     assert len(list((tmp_path / "checkpoints").iterdir())) == 1
-
-
-def test_actor_step_budget_stops_the_run():
-    from conftest import tiny_gmz
-
-    learner = run_experiment(
-        ExperimentConfig(config=tiny_gmz(), environment_factory=lambda seed: make_vec_env(2), max_num_actor_steps=60)
-    )
-    # ratio 2, batch 8: ~2 * 60 / 8 = 15 learner steps, give or take the limiter slack (one batch) and one chunk.
-    assert 10 <= learner.learn_steps <= 20
 
 
 def test_multiple_actor_threads():

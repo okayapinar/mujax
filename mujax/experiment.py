@@ -17,13 +17,12 @@ import optax
 from tqdm.auto import tqdm
 
 from mujax.actor import Actor
-from mujax.algorithm import Algorithm
 from mujax.algorithms import ALGORITHMS, algorithm_for
 from mujax.checkpoint import BestCheckpointer, CheckpointingConfig, StateCheckpointer, load_params, resolve_checkpoint
 from mujax.config import MuZeroConfig
 from mujax.learner import Learner
 from mujax.loggers import Logger, Writer
-from mujax.loop import Counter, EnvHook, EnvironmentLoop
+from mujax.loop import Counter, EnvironmentLoop
 from mujax.observers import ActionFractionObserver, EnvLoopObserver, PolicyEntropyObserver
 from mujax.reanalyze import Reanalyzer
 from mujax.replay import Buffer
@@ -49,12 +48,10 @@ class ExperimentConfig:
     """Definition of a single-process (threaded) experiment.
 
     Attributes:
-        config: Agent hyperparameters.
-        max_num_learner_steps / max_num_actor_steps: the run stops when either budget is reached (actor steps are
-            summed over the training envs). With `config.replay_ratio` the two are tied:
-            learner_steps ~= actor_steps * replay_ratio / batch_size, see `MuZeroConfig.num_learner_steps`.
-            Both None: runs until early stopping or Ctrl-C.
-        algorithm: if None, chosen from the config class (SMZConfig -> SMZ, GMZConfig -> GMZ).
+        config: Agent hyperparameters; the algorithm follows from its class (SMZConfig -> SMZ, GMZConfig -> GMZ).
+        max_num_learner_steps: the run stops at this many learner steps. With `config.replay_ratio` this also bounds
+            the env steps: actor_steps ~= learner_steps * batch_size / replay_ratio, see `MuZeroConfig.num_learner_steps`.
+            None: runs until early stopping or Ctrl-C.
         environment_factory: seed -> `gym.vector.VectorEnv` for training; called once per actor thread.
         num_actors: number of actor threads, each with its own env from `environment_factory` and its own search.
             The search runs on CPU and releases the GIL, so throughput scales with the number of cores; `actor_steps`
@@ -66,27 +63,21 @@ class ExperimentConfig:
         observer_factories: Each env loop (actor and evaluator) gets its own instance.
         writer: e.g. `create_writer(...)`; learner, actor and evaluator write to it under `learner/`, `actor/`,
             `evaluator/`. Closed at the end of `run_experiment`. None: only the progress bar.
-        hparams: Extra hyperparameters (e.g. env id) written to `writer` together with the algorithm config.
-        checkpoint_extra: JSON-serializable info to add to the checkpoint metadata.
-        train_env_hook / eval_env_hook: `hook(env, learner_steps)`; see EnvironmentLoop.
+        extra: JSON-serializable run info (e.g. the env id); written to `writer` with the config and stored in the
+            checkpoint metadata under "extra" (`load_actor` returns it).
     """
 
     config: MuZeroConfig
     environment_factory: Callable[[int], gym.vector.VectorEnv]
     max_num_learner_steps: int | None = None
-    max_num_actor_steps: int | None = None
     num_actors: int = 1
-    algorithm: Algorithm | None = None
     eval_environment_factory: Callable[[int], gym.vector.VectorEnv] | None = None
     seed: int = 0
     observer_factories: Sequence[Callable[[], EnvLoopObserver]] = ()
     writer: Writer | None = None
-    hparams: dict | None = None
     evaluation: EvaluationConfig = dataclasses.field(default_factory=EvaluationConfig)
     checkpointing: CheckpointingConfig | None = None
-    checkpoint_extra: dict | None = None
-    train_env_hook: EnvHook | None = None
-    eval_env_hook: EnvHook | None = None
+    extra: dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
 class ScoreTracker:
@@ -149,11 +140,10 @@ def setup_devices() -> tuple[jax.Device, jax.Device]:
     return actor_device, learner_device
 
 
-def make_optimizer(c: MuZeroConfig) -> tuple[optax.GradientTransformation, optax.Schedule]:
+def make_optimizer(c: MuZeroConfig) -> optax.GradientTransformation:
     lr_schedule = optax.warmup_constant_schedule(init_value=0.0, peak_value=c.learning_rate, warmup_steps=c.lr_warmup_steps)
     adamw = optax.adamw(lr_schedule, b1=c.adam_b1, b2=c.adam_b2, weight_decay=c.weight_decay)
-    optimizer = optax.chain(optax.clip_by_global_norm(c.max_grad_norm), adamw) if c.max_grad_norm > 0 else adamw
-    return optimizer, lr_schedule
+    return optax.chain(optax.clip_by_global_norm(c.max_grad_norm), adamw) if c.max_grad_norm > 0 else adamw
 
 
 class _Worker(threading.Thread):
@@ -177,7 +167,7 @@ class _Worker(threading.Thread):
 def run_experiment(experiment: ExperimentConfig) -> Learner:
     """Runs the actor and evaluator in threads and the learner in the main thread; returns the learner."""
     config = experiment.config
-    algorithm = experiment.algorithm or algorithm_for(config)
+    algorithm = algorithm_for(config)
     actor_device, learner_device = setup_devices()
     num_actors = int(experiment.num_actors)
     if num_actors < 1:
@@ -203,8 +193,7 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
     eval_environment = experiment.eval_environment_factory(eval_seed) if experiment.eval_environment_factory else None
     graphdef, params = algorithm.init(spec, config, learner_key)
     if writer is not None:
-        hparams = {"algo": algorithm.name, "seed": experiment.seed, **config.to_dict(), **(experiment.hparams or {})}
-        writer.write_config(hparams)
+        writer.write_config({"algo": algorithm.name, "seed": experiment.seed, **config.to_dict(), **experiment.extra})
 
     replay = Buffer(
         spec,
@@ -218,13 +207,10 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
         stop_event=stop_event,
         num_actors=num_actors,
     )
-    optimizer, lr_schedule = make_optimizer(config)
     learner = Learner(
         functools.partial(algorithm.loss, graphdef, config),
         params,
-        optimizer,
-        lr_schedule=lr_schedule,
-        batch_size=config.batch_size,
+        make_optimizer(config),
         device=learner_device,
         logger=make_logger("learner"),
         counter=counter,
@@ -274,7 +260,6 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
             counter=counter,
             logger=actor_logger,
             observers=make_observers(),
-            env_hook=experiment.train_env_hook,
             stop_event=stop_event,
             seed=seed,
         )
@@ -286,7 +271,7 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
             "algo": algorithm.name,
             "config": config.to_dict(),
             "environment_spec": spec._asdict(),
-            "extra": dict(experiment.checkpoint_extra or {}),
+            "extra": dict(experiment.extra),
         }
         best_checkpointer = BestCheckpointer(experiment.checkpointing, metadata)
     if eval_environment is not None:
@@ -299,7 +284,6 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
             logger=make_logger("evaluator"),
             observers=make_observers(),
             episode_callback=ScoreTracker(experiment.evaluation, eval_actor, stop_event, best_checkpointer),
-            env_hook=experiment.eval_env_hook,
             stop_event=stop_event,
             seed=eval_seed,
         )
@@ -319,9 +303,7 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
             previous_handlers[sig] = signal.signal(sig, request_stop)
 
     def budget_reached() -> bool:
-        if experiment.max_num_learner_steps is not None and learner.learn_steps >= experiment.max_num_learner_steps:
-            return True
-        return experiment.max_num_actor_steps is not None and counter.get().get("actor_steps", 0) >= experiment.max_num_actor_steps
+        return experiment.max_num_learner_steps is not None and learner.learn_steps >= experiment.max_num_learner_steps
 
     # Learner loop (main thread)
     for worker in workers:
@@ -368,7 +350,7 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
 def load_actor(reference: str, *, seed: int = 0, device: jax.Device | None = None) -> tuple[Actor, dict[str, Any]]:
     """Builds an evaluation actor from a checkpoint; for `reference` see `checkpoint.resolve_checkpoint`.
 
-    Returns (actor, metadata); metadata["extra"] is the `checkpoint_extra` given during training.
+    Returns (actor, metadata); metadata["extra"] is `ExperimentConfig.extra` of the training run.
     """
     step_dir, metadata = resolve_checkpoint(reference)
     algorithm = ALGORITHMS[metadata["algo"]]

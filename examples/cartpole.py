@@ -10,13 +10,7 @@ import sys
 
 import gymnasium as gym
 
-from mujax import (
-    CheckpointingConfig,
-    ExperimentConfig,
-    GMZConfig,
-    SMZConfig,
-    run_experiment,
-)
+from mujax import ExperimentConfig, GMZConfig, SMZConfig, run_experiment
 
 NUM_STEPS = 20_000
 

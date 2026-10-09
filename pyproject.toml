@@ -30,7 +30,6 @@ dependencies = [
     "gymnasium>=1.1.0",
     "numpy>=2.0.0",
     "tqdm",
-    "psutil",
     "rlax>=0.1.9",
     "distrax>=0.1.9",
     "tyro>=1.0.16",

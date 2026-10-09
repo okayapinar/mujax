@@ -34,13 +34,12 @@ class Args:
     num_steps: int = 100_000  # Total learner steps
     # Total env steps (summed over envs); converted to learner steps with replay_ratio and overrides --num-steps.
     num_env_steps: int | None = None
-    size: str = "M"  # Network size preset: XS, S, M, L, XL (XS / S are enough for classic-control envs and search much faster)
+    size: str = "M"  # Network size preset: S, M, L, XL (S is enough for classic-control envs and searches much faster)
     seed: int = 0
     checkpoint_dir: str = "checkpoints"
     console: bool = True  # Print metrics to the terminal
     wandb: bool = False  # Also log to W&B
     wandb_project: str = "mujax"
-    wandb_api_key: str | None = None  # If unset, wandb's own credentials (`wandb login`) are used
 
 
 def make_vec_env(env_id: str, num_envs: int) -> gym.vector.VectorEnv:
@@ -56,12 +55,7 @@ def main(argv: list[str] | None = None) -> None:
     config = config.with_num_steps(num_steps)
 
     run_name = f"{algo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    writer = create_writer(
-        console=args.console,
-        wandb_project=args.wandb_project if args.wandb else None,
-        wandb_name=run_name,
-        wandb_api_key=args.wandb_api_key,
-    )
+    writer = create_writer(console=args.console, wandb_project=args.wandb_project if args.wandb else None, wandb_name=run_name)
 
     experiment = ExperimentConfig(
         config=config,
@@ -71,9 +65,8 @@ def main(argv: list[str] | None = None) -> None:
         num_actors=args.num_actors,
         seed=args.seed,
         writer=writer,
-        hparams={"env": args.env, "num_envs": args.num_envs, "num_actors": args.num_actors, "size": args.size},
         checkpointing=CheckpointingConfig(directory=os.path.join(args.checkpoint_dir, run_name)),
-        checkpoint_extra={"env_id": args.env},
+        extra={"env_id": args.env, "num_envs": args.num_envs, "num_actors": args.num_actors, "size": args.size},
     )
     run_experiment(experiment)
     print("Tamamlandi")

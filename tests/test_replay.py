@@ -29,10 +29,10 @@ def test_sample_after_one_chunk():
     buffer = Buffer(SPEC, num_envs=2, max_size=64, sample_batch_size=4, sequence_length=5)
     key = jax.random.PRNGKey(0)
     for _ in range(4):
-        buffer.add(transition(2))
+        buffer.adder(0).add(transition(2))
     assert buffer.sample(key) is None and buffer.size == 0
 
-    buffer.add(transition(2))
+    buffer.adder(0).add(transition(2))
     assert buffer.size == 10
     batch = buffer.sample(key).experience
     assert batch.observation.shape == (4, 5, SPEC.obs_dim)
@@ -61,10 +61,10 @@ def test_sample_waits_for_min_size():
     buffer = Buffer(SPEC, num_envs=2, max_size=64, sample_batch_size=4, sequence_length=5, min_size=25)
     key = jax.random.PRNGKey(0)
     for _ in range(10):
-        buffer.add(transition(2))
+        buffer.adder(0).add(transition(2))
     assert buffer.size == 20 and buffer.sample(key) is None
     for _ in range(5):
-        buffer.add(transition(2))
+        buffer.adder(0).add(transition(2))
     assert buffer.sample(key) is not None
 
 
@@ -73,7 +73,7 @@ def test_min_size_is_capped_at_max_size():
 
     buffer = Buffer(SPEC, num_envs=2, max_size=20, sample_batch_size=4, sequence_length=5, min_size=1000)
     for _ in range(10):
-        buffer.add(transition(2))
+        buffer.adder(0).add(transition(2))
     assert buffer.sample(jax.random.PRNGKey(0)) is not None
 
 
@@ -137,7 +137,7 @@ def test_buffer_replay_ratio_keeps_actor_and_learner_in_step():
     def actor():
         nonlocal added
         for _ in range(100):
-            buffer.add(transition(2))
+            buffer.adder(0).add(transition(2))
             added += 1
 
     thread = threading.Thread(target=actor, daemon=True)
@@ -169,8 +169,6 @@ def test_multi_actor_chunks_keep_rows_contiguous():
         return t._replace(observation=obs)
 
     buffer = Buffer(SPEC, num_envs=2, max_size=200, sample_batch_size=16, sequence_length=5, num_actors=2)
-    with pytest.raises(RuntimeError):
-        buffer.add(transition(2))
     a0, a1 = buffer.adder(0), buffer.adder(1)
     for step in range(10):  # actor 0 is two chunks ahead; nothing lands until actor 1 catches up
         a0.add(marked(2, 0, step))

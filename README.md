@@ -76,7 +76,7 @@ ExperimentConfig(..., writer=writer)
 
 Any object with `write(step, scalars)`, `write_config(config)` and `close()` works as a writer (`mujax.Writer`). Without a writer only the progress bar is shown.
 
-On the command line metrics are printed to the terminal (`--no-console` turns it off); add `--wandb` (`--wandb-project`, `--wandb-api-key`) for W&B.
+On the command line metrics are printed to the terminal (`--no-console` turns it off); add `--wandb` (`--wandb-project`) for W&B.
 
 ## Layout
 
@@ -85,7 +85,7 @@ On the command line metrics are printed to the terminal (`--no-console` turns it
 | `config.py` | `MuZeroConfig`, shared hyperparameters |
 | `algorithm.py` | `Algorithm`, `SearchPolicy`: the contract between the infrastructure and an algorithm |
 | `algorithms/__init__.py` | `ALGORITHMS` registry, `algorithm_for` |
-| `algorithms/muzero.py` | shared math of the MuZero family: `Support`, network blocks, loss skeleton, PUCT exploration |
+| `algorithms/muzero.py` | shared math of the MuZero family: `Support`, network blocks, loss skeleton |
 | `algorithms/smz.py`, `algorithms/gmz.py` | algorithms: config, networks, search, loss |
 | `replay.py`, `reanalyze.py` | flashbax replay and reanalyze iterator |
 | `actor.py`, `learner.py`, `loop.py` | environment interaction, gradient step, environment loop |

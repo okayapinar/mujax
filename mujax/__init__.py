@@ -4,7 +4,7 @@ Module map:
     config.py      MuZeroConfig
     algorithm.py   Algorithm, SearchPolicy: the contract between the infrastructure and an algorithm
     algorithms/    ALGORITHMS registry and the algorithms
-        muzero.py      shared math of the MuZero family: Support, network blocks, loss skeleton, PUCT exploration
+        muzero.py      shared math of the MuZero family: Support, network blocks, loss skeleton
         smz.py / gmz.py  algorithms (config, networks, search, loss)
     replay.py / reanalyze.py  flashbax replay and reanalyze iterator
     actor.py / learner.py / loop.py  environment interaction, gradient step, env loop
