@@ -1,6 +1,6 @@
-"""Train Gumbel MuZero on CartPole-v1 and keep the best checkpoint.
+"""Train Gumbel MuZero on Acrobot-v1 and keep the best checkpoint.
 
-python examples/cartpole.py
+python examples/acrobot.py
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ NUM_STEPS = 20_000
 def make_env(num_envs: int) -> gym.vector.VectorEnv:
     # SAME_STEP autoreset is required: the final observation of a truncated episode is read from `info["final_obs"]`.
     return gym.make_vec(
-        "CartPole-v1",
+        "Acrobot-v1",
         num_envs=num_envs,
         vectorization_mode="sync",
         vector_kwargs={"autoreset_mode": gym.vector.AutoresetMode.SAME_STEP},
