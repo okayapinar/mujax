@@ -82,7 +82,7 @@ class Actor:
 
         params, learner_steps = self._params
         self._key, search_key = jax.random.split(self._key)
-        search = self._search(params, np.asarray(observation), search_key, self._invalid_actions, learner_steps)
+        search = self._search(params, np.asarray(observation, dtype=np.float32), search_key, self._invalid_actions, learner_steps)
         self._last_search = SearchOutput(
             action=np.asarray(search.action, dtype=np.int32),
             policy_probs=np.asarray(search.policy_probs, dtype=np.float32),
