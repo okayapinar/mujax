@@ -8,8 +8,9 @@ Module map:
         smz.py / gmz.py  algorithms (config, networks, search, loss)
     replay.py / reanalyze.py  flashbax replay and reanalyze iterator
     actor.py / learner.py / loop.py  environment interaction, gradient step, env loop
-    observers.py / loggers.py / checkpoint.py  metrics, terminal/W&B writers, orbax checkpoint
-    experiment.py  ExperimentConfig, run_experiment, load_actor
+    observers.py / loggers.py / checkpoint.py  metrics, terminal/W&B writers, best/latest checkpoints (Orbax)
+    experiment.py  ExperimentConfig, run_experiment
+    inference.py   Policy, load_policy, load_actor: running a checkpoint outside of training
 """
 
 from mujax.actor import Actor
@@ -17,14 +18,15 @@ from mujax.algorithm import Algorithm
 from mujax.algorithms import ALGORITHMS, GMZ, SMZ, GMZConfig, SMZConfig, algorithm_for
 from mujax.checkpoint import CheckpointingConfig
 from mujax.config import MuZeroConfig
-from mujax.experiment import EvaluationConfig, ExperimentConfig, load_actor, run_experiment
+from mujax.experiment import EvaluationConfig, ExperimentConfig, run_experiment
+from mujax.inference import Policy, load_actor, load_policy
 from mujax.learner import Learner
 from mujax.loggers import ConsoleWriter, Logger, WandbWriter, Writer, create_writer
 from mujax.loop import EnvironmentLoop
 from mujax.observers import EnvLoopObserver, InfoKeysObserver
 from mujax.types import EnvironmentSpec, as_vector_env, make_environment_spec
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "ALGORITHMS",
@@ -44,6 +46,7 @@ __all__ = [
     "Learner",
     "Logger",
     "MuZeroConfig",
+    "Policy",
     "SMZConfig",
     "WandbWriter",
     "Writer",
@@ -51,6 +54,7 @@ __all__ = [
     "as_vector_env",
     "create_writer",
     "load_actor",
+    "load_policy",
     "make_environment_spec",
     "run_experiment",
 ]

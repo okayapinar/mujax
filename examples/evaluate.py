@@ -9,24 +9,20 @@ from __future__ import annotations
 import sys
 
 import gymnasium as gym
-import numpy as np
 
-from mujax import as_vector_env, load_actor
+from mujax import load_policy
 
 
 def main(reference: str, num_episodes: int = 5) -> None:
-    actor, metadata = load_actor(reference)
-    env = as_vector_env(gym.make(metadata["extra"]["env_id"]))  # actor works on (num_envs, ...) batches
+    policy = load_policy(reference)
+    env = gym.make(policy.metadata["extra"]["env_id"])
     for episode in range(num_episodes):
-        observation, info = env.reset(seed=episode)
-        actor.observe_first(observation, info)
+        observation, _ = env.reset(seed=episode)
         episode_return, done = 0.0, False
         while not done:
-            observation, reward, terminated, truncated, info = env.step(
-                actor.select_action(observation)
-            )
-            episode_return += float(reward[0])
-            done = bool(np.logical_or(terminated, truncated)[0])
+            observation, reward, terminated, truncated, _ = env.step(policy.act(observation))
+            episode_return += float(reward)
+            done = terminated or truncated
         print(f"episode {episode}: return={episode_return:.1f}")
     env.close()
 

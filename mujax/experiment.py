@@ -17,8 +17,8 @@ import optax
 from tqdm.auto import tqdm
 
 from mujax.actor import Actor
-from mujax.algorithms import ALGORITHMS, algorithm_for
-from mujax.checkpoint import BestCheckpointer, CheckpointingConfig, StateCheckpointer, load_params, resolve_checkpoint
+from mujax.algorithms import algorithm_for
+from mujax.checkpoint import Checkpointer, CheckpointingConfig
 from mujax.config import MuZeroConfig
 from mujax.learner import Learner
 from mujax.loggers import Logger, Writer
@@ -26,7 +26,7 @@ from mujax.loop import Counter, EnvironmentLoop
 from mujax.observers import ActionFractionObserver, EnvLoopObserver, PolicyEntropyObserver
 from mujax.reanalyze import Reanalyzer
 from mujax.replay import Buffer
-from mujax.types import EnvironmentSpec, as_vector_env, make_environment_spec
+from mujax.types import as_vector_env, make_environment_spec
 
 
 @dataclasses.dataclass
@@ -65,7 +65,7 @@ class ExperimentConfig:
         writer: e.g. `create_writer(...)`; learner, actor and evaluator write to it under `learner/`, `actor/`,
             `evaluator/`. Closed at the end of `run_experiment`. None: only the progress bar.
         extra: JSON-serializable run info (e.g. the env id); written to `writer` with the config and stored in the
-            checkpoint metadata under "extra" (`load_actor` returns it).
+            checkpoint metadata under "extra" (`load_policy(...).metadata["extra"]`).
     """
 
     config: MuZeroConfig
@@ -88,7 +88,7 @@ class ScoreTracker:
     episode score; the saved params are those that played the episode that last updated the EMA.
     """
 
-    def __init__(self, config: EvaluationConfig, actor: Actor, stop_event: threading.Event, checkpointer: BestCheckpointer | None) -> None:
+    def __init__(self, config: EvaluationConfig, actor: Actor, stop_event: threading.Event, checkpointer: Checkpointer | None) -> None:
         self._config = config
         self._actor = actor
         self._stop_event = stop_event
@@ -108,8 +108,7 @@ class ScoreTracker:
 
         if self._checkpointer is not None:
             params, step = self._actor.get_params()
-            self._checkpointer.maybe_update(self._ema, step, params)
-            self._checkpointer.maybe_persist()
+            self._checkpointer.update_best(self._ema, step, params)
         self._check_early_stopping(result.get("learner_steps", 0))
 
     def _check_early_stopping(self, learner_steps: int) -> None:
@@ -217,11 +216,17 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
         counter=counter,
         replay=replay,
     )
-    state_checkpointer = None
+    checkpointer = None
     if experiment.checkpointing is not None:
-        state_checkpointer = StateCheckpointer(experiment.checkpointing, learner)
+        metadata = {
+            "algo": algorithm.name,
+            "config": config.to_dict(),
+            "environment_spec": spec._asdict(),
+            "extra": dict(experiment.extra),
+        }
+        checkpointer = Checkpointer(experiment.checkpointing, learner, metadata)
         if experiment.checkpointing.resume:
-            state_checkpointer.restore()
+            checkpointer.restore()
     dataset = Reanalyzer(
         replay,
         config=config,
@@ -265,15 +270,6 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
         )
         workers.append(_Worker(f"actor-{index}" if num_actors > 1 else "actor", train_loop.run, stop_event))
 
-    best_checkpointer = None
-    if experiment.checkpointing is not None:
-        metadata = {
-            "algo": algorithm.name,
-            "config": config.to_dict(),
-            "environment_spec": spec._asdict(),
-            "extra": dict(experiment.extra),
-        }
-        best_checkpointer = BestCheckpointer(experiment.checkpointing, metadata)
     if eval_environment is not None:
         eval_actor = make_actor(eval_key, evaluation=True)
         eval_loop = EnvironmentLoop(
@@ -283,7 +279,7 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
             counter=counter,
             logger=make_logger("evaluator"),
             observers=make_observers(),
-            episode_callback=ScoreTracker(experiment.evaluation, eval_actor, stop_event, best_checkpointer),
+            episode_callback=ScoreTracker(experiment.evaluation, eval_actor, stop_event, checkpointer),
             stop_event=stop_event,
             seed=eval_seed,
         )
@@ -317,20 +313,16 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
                 break
             learner.step(batch)
             progress.update(1)
-            if state_checkpointer is not None:
-                state_checkpointer.maybe_save()
+            if checkpointer is not None:
+                checkpointer.save_latest()
     finally:
         stop_event.set()
         progress.close()
         for worker in workers:
             worker.join(timeout=10.0)
         try:
-            if best_checkpointer is not None:
-                best_checkpointer.persist()
-                best_checkpointer.close()
-            if state_checkpointer is not None:
-                state_checkpointer.save()
-                state_checkpointer.close()
+            if checkpointer is not None:
+                checkpointer.close()
         finally:
             for env in environments:
                 env.close(terminate=True)  # so AsyncVectorEnv subprocesses close without waiting
@@ -345,25 +337,3 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
         if worker.error is not None:
             raise RuntimeError(f"'{worker.name}' thread'i hata verdi") from worker.error
     return learner
-
-
-def load_actor(reference: str, *, seed: int = 0, device: jax.Device | None = None) -> tuple[Actor, dict[str, Any]]:
-    """Builds an evaluation actor from a checkpoint; for `reference` see `checkpoint.resolve_checkpoint`.
-
-    Returns (actor, metadata); metadata["extra"] is `ExperimentConfig.extra` of the training run.
-    """
-    step_dir, metadata = resolve_checkpoint(reference)
-    algorithm = ALGORITHMS[metadata["algo"]]
-    config = algorithm.config_cls.from_dict(metadata["config"])
-    spec = EnvironmentSpec(**metadata["environment_spec"])
-    graphdef, template = algorithm.init(spec, config, jax.random.PRNGKey(0))
-    params = load_params(step_dir, template)
-    actor = Actor(
-        algorithm.make_policy(graphdef, spec, config, True),
-        jax.random.PRNGKey(seed),
-        lambda: (params, int(metadata.get("step", 0))),
-        num_actions=spec.num_actions,
-        device=device,
-        per_episode_update=True,
-    )
-    return actor, metadata

@@ -1,5 +1,6 @@
 """End-to-end smoke tests: a few learner steps, checkpoint and restore."""
 
+import numpy as np
 from conftest import make_vec_env
 
 from mujax import (
@@ -7,6 +8,7 @@ from mujax import (
     EvaluationConfig,
     ExperimentConfig,
     load_actor,
+    load_policy,
     run_experiment,
 )
 from mujax.cli import main
@@ -27,9 +29,13 @@ def test_run_and_load(tiny_config, tmp_path):
     assert learner.learn_steps == 5
 
     # Learner state is always written at the end; best params only if the evaluator finished an episode.
-    assert (tmp_path / "state").is_dir()
-    if not any((tmp_path / "best").iterdir()):
+    assert (tmp_path / "latest").is_dir()
+    if not (tmp_path / "best").is_dir():
         return
+    policy = load_policy(str(tmp_path))
+    assert policy.metadata["extra"] == {"env_id": "CartPole-v1"}
+    assert 0 <= policy.act(np.zeros(4, np.float32)) < 2
+    assert policy.act(np.zeros((3, 4), np.float32)).shape == (3,)
     actor, metadata = load_actor(str(tmp_path))
     assert metadata["extra"] == {"env_id": "CartPole-v1"}
     env = make_vec_env(1)

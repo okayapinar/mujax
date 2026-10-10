@@ -41,7 +41,7 @@ Checkpoints are written to `checkpoints/<algo>_<timestamp>/`.
 
 ```python
 import gymnasium as gym
-from mujax import CheckpointingConfig, ExperimentConfig, GMZConfig, load_actor, run_experiment
+from mujax import CheckpointingConfig, ExperimentConfig, GMZConfig, load_policy, run_experiment
 
 
 def make_env(num_envs):
@@ -60,10 +60,36 @@ run_experiment(
     )
 )
 
-actor, metadata = load_actor("checkpoints/cartpole")
+policy = load_policy("checkpoints/cartpole")
+action = policy.act(observation)  # int for one observation, (N,) array for a batch
 ```
 
 Environment factories may return a single `gym.Env` (used as `num_envs=1`) or a vector env; vector envs must use `AutoresetMode.SAME_STEP`. See [`examples/`](https://github.com/okayapinar/mujax/tree/master/examples) for training scripts (classic control, Pendulum with discrete torques, FrozenLake, Blackjack) and evaluation (`evaluate.py`).
+
+### Checkpoints
+
+A run writes two checkpoints under `CheckpointingConfig.directory` (`checkpoints/<algo>_<timestamp>/` on the command line):
+
+| Directory | Contents | Used by |
+| --- | --- | --- |
+| `best/` | params with the best evaluator score (EMA) | `load_policy`, `load_actor` |
+| `latest/` | full learner state: params, optimizer, step | the next run in the same directory (`resume=True`) |
+
+Each is written at most once per `every_sec` (default 30 minutes; `0` writes only at the end of the run) and replaced atomically. A resumed run keeps the previous best score, so `best/` is only overwritten by better params. With an active W&B run, every `best/` write is uploaded as a `model` artifact (`upload_to_wandb`).
+
+For inference, `load_policy` takes a run directory, a `best/` directory or a W&B artifact reference (`entity/project/run-checkpoint:best`) and returns a `Policy`:
+
+```python
+policy = load_policy("checkpoints/cartpole")
+env = gym.make(policy.metadata["extra"]["env_id"])   # `extra` is `ExperimentConfig.extra` of the training run
+observation, _ = env.reset()
+action = policy.act(observation)                      # single observation -> int
+actions = policy.act(observations)                    # (N, obs_dim) batch -> (N,)
+output = policy.search(observations)                  # action, policy_probs and value of the search
+actor = policy.actor()                                # batched `Actor` for `EnvironmentLoop`
+```
+
+`policy.act(observation, invalid_actions=mask)` masks actions (1 = invalid), like `info["invalid_actions"]` during training. The search is jitted per batch size.
 
 ### Logging
 
@@ -89,8 +115,9 @@ On the command line metrics are printed to the terminal (`--no-console` turns it
 | `algorithms/smz.py`, `algorithms/gmz.py` | algorithms: config, networks, search, loss |
 | `replay.py`, `reanalyze.py` | flashbax replay and reanalyze iterator |
 | `actor.py`, `learner.py`, `loop.py` | environment interaction, gradient step, environment loop |
-| `observers.py`, `loggers.py`, `checkpoint.py` | metrics, terminal and W&B writers, Orbax checkpoints |
-| `experiment.py` | `ExperimentConfig`, `run_experiment`, `load_actor` |
+| `observers.py`, `loggers.py`, `checkpoint.py` | metrics, terminal and W&B writers, `best/` and `latest/` checkpoints (Orbax) |
+| `experiment.py` | `ExperimentConfig`, `run_experiment` |
+| `inference.py` | `Policy`, `load_policy`, `load_actor`: running a checkpoint outside of training |
 
 ## Development
 
