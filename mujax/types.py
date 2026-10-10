@@ -13,9 +13,31 @@ class EnvironmentSpec(NamedTuple):
     num_actions: int
 
 
-def make_environment_spec(env: gym.vector.VectorEnv) -> EnvironmentSpec:
-    """Derives the spec from the vector env's sub-env spaces (1-D Box observation, Discrete action)."""
-    observations, actions = env.single_observation_space, env.single_action_space
+def as_vector_env(env: gym.Env | gym.vector.VectorEnv) -> gym.vector.VectorEnv:
+    """Returns the env as a SAME_STEP-autoreset vector env.
+
+    A vector env is returned as is (it must already use SAME_STEP autoreset); a single `gym.Env` is wrapped in a
+    `SyncVectorEnv` with `num_envs=1`, so the loop, actor and replay only ever see batched `(num_envs, ...)` data.
+    Closing the returned env closes the wrapped one.
+    """
+    if isinstance(env, gym.vector.VectorEnv):
+        if env.metadata.get("autoreset_mode") != gym.vector.AutoresetMode.SAME_STEP:
+            raise ValueError(
+                "Vektor env SAME_STEP autoreset ile kurulmali (NEXT_STEP'teki reset adimi replay'e sahte gecis yazar): "
+                'gym.make_vec(..., vector_kwargs={"autoreset_mode": gym.vector.AutoresetMode.SAME_STEP})'
+            )
+        return env
+    if isinstance(env, gym.Env):
+        return gym.vector.SyncVectorEnv([lambda: env], autoreset_mode=gym.vector.AutoresetMode.SAME_STEP)
+    raise TypeError(f"gym.Env veya gym.vector.VectorEnv bekleniyor, gelen: {type(env).__name__}")
+
+
+def make_environment_spec(env: gym.Env | gym.vector.VectorEnv) -> EnvironmentSpec:
+    """Derives the spec from the env's (sub-env) spaces (1-D Box observation, Discrete action)."""
+    if isinstance(env, gym.vector.VectorEnv):
+        observations, actions = env.single_observation_space, env.single_action_space
+    else:
+        observations, actions = env.observation_space, env.action_space
     if not isinstance(observations, gym.spaces.Box) or len(observations.shape) != 1:
         raise ValueError(f"1 boyutlu Box gozlem uzayi gerekli, gelen: {observations} (gym.wrappers.FlattenObservation kullan)")
     if not isinstance(actions, gym.spaces.Discrete):

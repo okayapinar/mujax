@@ -63,7 +63,7 @@ run_experiment(
 actor, metadata = load_actor("checkpoints/cartpole")
 ```
 
-Environments must use `AutoresetMode.SAME_STEP`. See [`examples/`](https://github.com/okayapinar/mujax/tree/master/examples) for training scripts (classic control, Pendulum with discrete torques, FrozenLake, Blackjack) and evaluation (`evaluate.py`).
+Environment factories may return a single `gym.Env` (used as `num_envs=1`) or a vector env; vector envs must use `AutoresetMode.SAME_STEP`. See [`examples/`](https://github.com/okayapinar/mujax/tree/master/examples) for training scripts (classic control, Pendulum with discrete torques, FrozenLake, Blackjack) and evaluation (`evaluate.py`).
 
 ### Logging
 

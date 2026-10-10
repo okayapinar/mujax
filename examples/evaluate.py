@@ -11,14 +11,12 @@ import sys
 import gymnasium as gym
 import numpy as np
 
-from mujax import load_actor
+from mujax import as_vector_env, load_actor
 
 
 def main(reference: str, num_episodes: int = 5) -> None:
     actor, metadata = load_actor(reference)
-    env = gym.make_vec(
-        metadata["extra"]["env_id"], num_envs=1, vectorization_mode="sync"
-    )
+    env = as_vector_env(gym.make(metadata["extra"]["env_id"]))  # actor works on (num_envs, ...) batches
     for episode in range(num_episodes):
         observation, info = env.reset(seed=episode)
         actor.observe_first(observation, info)

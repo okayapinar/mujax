@@ -10,7 +10,7 @@ import numpy as np
 from mujax.actor import Actor
 from mujax.loggers import Logger
 from mujax.observers import EnvLoopObserver
-from mujax.types import TimeStep
+from mujax.types import TimeStep, as_vector_env
 
 EpisodeCallback = Callable[[dict[str, float]], None]
 
@@ -34,9 +34,10 @@ class Counter:
 
 
 class EnvironmentLoop:
-    """Runs the vector env with the actor; reports each sub-env's episode result via counter, observers and logger.
+    """Runs the env with the actor; reports each sub-env's episode result via counter, observers and logger.
 
-    The env must be built with SAME_STEP autoreset; for a single env use `num_envs=1`:
+    Accepts a single `gym.Env` (wrapped as a `num_envs=1` vector env, see `as_vector_env`) or a
+    `gym.vector.VectorEnv` built with SAME_STEP autoreset:
     `gym.make_vec(env_id, num_envs, vector_kwargs={"autoreset_mode": gym.vector.AutoresetMode.SAME_STEP})`.
 
     Args:
@@ -49,7 +50,7 @@ class EnvironmentLoop:
 
     def __init__(
         self,
-        environment: gym.vector.VectorEnv,
+        environment: gym.Env | gym.vector.VectorEnv,
         actor: Actor,
         *,
         name: str = "actor",
@@ -60,11 +61,7 @@ class EnvironmentLoop:
         stop_event: threading.Event | None = None,
         seed: int | None = None,
     ) -> None:
-        if environment.metadata.get("autoreset_mode") != gym.vector.AutoresetMode.SAME_STEP:
-            raise ValueError(
-                "Vektor env SAME_STEP autoreset ile kurulmali (NEXT_STEP'teki reset adimi replay'e sahte gecis yazar): "
-                'gym.make_vec(..., vector_kwargs={"autoreset_mode": gym.vector.AutoresetMode.SAME_STEP})'
-            )
+        environment = as_vector_env(environment)
         self._env = environment
         self._actor = actor
         self._name = name

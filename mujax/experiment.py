@@ -26,7 +26,7 @@ from mujax.loop import Counter, EnvironmentLoop
 from mujax.observers import ActionFractionObserver, EnvLoopObserver, PolicyEntropyObserver
 from mujax.reanalyze import Reanalyzer
 from mujax.replay import Buffer
-from mujax.types import EnvironmentSpec, make_environment_spec
+from mujax.types import EnvironmentSpec, as_vector_env, make_environment_spec
 
 
 @dataclasses.dataclass
@@ -52,12 +52,13 @@ class ExperimentConfig:
         max_num_learner_steps: the run stops at this many learner steps. With `config.replay_ratio` this also bounds
             the env steps: actor_steps ~= learner_steps * batch_size / replay_ratio, see `MuZeroConfig.num_learner_steps`.
             None: runs until early stopping or Ctrl-C.
-        environment_factory: seed -> `gym.vector.VectorEnv` for training; called once per actor thread.
+        environment_factory: seed -> `gym.Env` or SAME_STEP `gym.vector.VectorEnv` for training; called once per
+            actor thread. A single env counts as `num_envs=1` (see `as_vector_env`).
         num_actors: number of actor threads, each with its own env from `environment_factory` and its own search.
             The search runs on CPU and releases the GIL, so throughput scales with the number of cores; `actor_steps`
             is summed over all of them and the replay buffer holds `num_actors * num_envs` rows.
-        eval_environment_factory: seed -> `gym.vector.VectorEnv` for evaluation (usually
-            num_envs=1); if None, there is no evaluator.
+        eval_environment_factory: seed -> `gym.Env` or `gym.vector.VectorEnv` for evaluation (usually a single
+            env); if None, there is no evaluator.
         seed: Seeds the network init, search and replay sampling, and the first env reset (actor a's sub-env i gets
             `seed + a * num_envs + i`, the evaluator `seed + num_actors * num_envs + i`).
         observer_factories: Each env loop (actor and evaluator) gets its own instance.
@@ -68,10 +69,10 @@ class ExperimentConfig:
     """
 
     config: MuZeroConfig
-    environment_factory: Callable[[int], gym.vector.VectorEnv]
+    environment_factory: Callable[[int], gym.Env | gym.vector.VectorEnv]
     max_num_learner_steps: int | None = None
     num_actors: int = 1
-    eval_environment_factory: Callable[[int], gym.vector.VectorEnv] | None = None
+    eval_environment_factory: Callable[[int], gym.Env | gym.vector.VectorEnv] | None = None
     seed: int = 0
     observer_factories: Sequence[Callable[[], EnvLoopObserver]] = ()
     writer: Writer | None = None
@@ -181,16 +182,16 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
     def make_logger(label: str) -> Logger | None:
         return None if writer is None else Logger(label, writer)
 
-    environments = [experiment.environment_factory(experiment.seed)]
+    environments = [as_vector_env(experiment.environment_factory(experiment.seed))]
     spec = make_environment_spec(environments[0])
     num_envs = int(environments[0].num_envs)
     # Actor a's sub-envs use seeds seed+a*num_envs..; the evaluator starts right after so no initial state repeats.
     actor_seeds = [experiment.seed + index * num_envs for index in range(num_actors)]
-    environments += [experiment.environment_factory(seed) for seed in actor_seeds[1:]]
+    environments += [as_vector_env(experiment.environment_factory(seed)) for seed in actor_seeds[1:]]
     if any(int(env.num_envs) != num_envs for env in environments):
         raise ValueError("environment_factory her aktor icin ayni num_envs ile env uretmeli")
     eval_seed = experiment.seed + num_actors * num_envs
-    eval_environment = experiment.eval_environment_factory(eval_seed) if experiment.eval_environment_factory else None
+    eval_environment = as_vector_env(experiment.eval_environment_factory(eval_seed)) if experiment.eval_environment_factory else None
     graphdef, params = algorithm.init(spec, config, learner_key)
     if writer is not None:
         writer.write_config({"algo": algorithm.name, "seed": experiment.seed, **config.to_dict(), **experiment.extra})

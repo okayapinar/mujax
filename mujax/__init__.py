@@ -22,7 +22,7 @@ from mujax.learner import Learner
 from mujax.loggers import ConsoleWriter, Logger, WandbWriter, Writer, create_writer
 from mujax.loop import EnvironmentLoop
 from mujax.observers import EnvLoopObserver, InfoKeysObserver
-from mujax.types import EnvironmentSpec, make_environment_spec
+from mujax.types import EnvironmentSpec, as_vector_env, make_environment_spec
 
 __version__ = "0.1.0"
 
@@ -48,6 +48,7 @@ __all__ = [
     "WandbWriter",
     "Writer",
     "algorithm_for",
+    "as_vector_env",
     "create_writer",
     "load_actor",
     "make_environment_spec",

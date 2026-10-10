@@ -40,6 +40,20 @@ def test_run_and_load(tiny_config, tmp_path):
     env.close()
 
 
+def test_single_env_factories(tmp_path):
+    import gymnasium as gym
+    from conftest import tiny_gmz
+
+    experiment = ExperimentConfig(
+        config=tiny_gmz(),
+        environment_factory=lambda seed: gym.make("CartPole-v1"),
+        eval_environment_factory=lambda seed: gym.make("CartPole-v1"),
+        max_num_learner_steps=3,
+        checkpointing=CheckpointingConfig(directory=str(tmp_path), every_sec=0, upload_to_wandb=False),
+    )
+    assert run_experiment(experiment).learn_steps == 3
+
+
 def test_resume_continues_from_state(tmp_path):
     from conftest import tiny_gmz
 
