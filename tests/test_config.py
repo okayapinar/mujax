@@ -3,6 +3,7 @@ import dataclasses
 import pytest
 
 from mujax import GMZ, SMZ, GMZConfig, MuZeroConfig, SMZConfig, algorithm_for
+from mujax.config import SIZES
 
 
 @pytest.mark.parametrize("cls", [MuZeroConfig, SMZConfig, GMZConfig])
@@ -33,11 +34,12 @@ def test_algorithm_for():
 
 @pytest.mark.parametrize("cls", [SMZConfig, GMZConfig])
 def test_with_size(cls):
+    width, depth, embedding_dim = SIZES["L"]
     config = cls().with_size("l")
-    assert config.embedding_dim == 128
+    assert config.embedding_dim == embedding_dim
     for field in dataclasses.fields(config):
         if field.name.endswith("_layer_sizes"):
-            assert getattr(config, field.name) == (512, 512, 512), field.name
+            assert getattr(config, field.name) == (width,) * depth, field.name
     with pytest.raises(ValueError):
         cls().with_size("huge")
 
