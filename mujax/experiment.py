@@ -18,7 +18,7 @@ from tqdm.auto import tqdm
 
 from mujax.actor import Actor
 from mujax.algorithms import algorithm_for
-from mujax.checkpoint import Checkpointer, CheckpointingConfig
+from mujax.checkpoint import Checkpointer, CheckpointingConfig, load_params
 from mujax.config import MuZeroConfig
 from mujax.learner import Learner
 from mujax.loggers import Logger, Writer
@@ -64,6 +64,8 @@ class ExperimentConfig:
         observer_factories: Each env loop (actor and evaluator) gets its own instance.
         writer: e.g. `create_writer(...)`; learner, actor and evaluator write to it under `learner/`, `actor/`,
             `evaluator/`. Closed at the end of `run_experiment`. None: only the progress bar.
+        init_checkpoint: Optional checkpoint reference (`checkpoints/<run>`, `<run>/best` or W&B artifact) whose
+            best params initialize the network with `learn_steps=0` and a fresh optimizer (warm-start).
         extra: JSON-serializable run info (e.g. the env id); written to `writer` with the config and stored in the
             checkpoint metadata under "extra" (`load_policy(...).metadata["extra"]`).
     """
@@ -78,6 +80,7 @@ class ExperimentConfig:
     writer: Writer | None = None
     evaluation: EvaluationConfig = dataclasses.field(default_factory=EvaluationConfig)
     checkpointing: CheckpointingConfig | None = None
+    init_checkpoint: str | None = None
     extra: dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
@@ -192,6 +195,8 @@ def run_experiment(experiment: ExperimentConfig) -> Learner:
     eval_seed = experiment.seed + num_actors * num_envs
     eval_environment = as_vector_env(experiment.eval_environment_factory(eval_seed)) if experiment.eval_environment_factory else None
     graphdef, params = algorithm.init(spec, config, learner_key)
+    if experiment.init_checkpoint is not None:
+        load_params(experiment.init_checkpoint, params)
     if writer is not None:
         writer.write_config({"algo": algorithm.name, "seed": experiment.seed, **config.to_dict(), **experiment.extra})
 

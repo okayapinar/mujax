@@ -75,6 +75,34 @@ def test_resume_continues_from_state(tmp_path):
     assert run_experiment(experiment(6)).learn_steps == 6
 
 
+def test_init_checkpoint_loads_params_at_step_zero(tmp_path):
+    import jax
+    from conftest import tiny_gmz
+    from flax import nnx
+
+    from mujax.checkpoint import save_checkpoint
+
+    fold1 = tmp_path / "fold1" / "best"
+    config = tiny_gmz()
+    learner0 = run_experiment(
+        ExperimentConfig(config=config, environment_factory=lambda seed: make_vec_env(2), max_num_learner_steps=0)
+    )
+    custom_params = jax.tree.map(lambda x: np.full_like(np.asarray(x), 0.25), nnx.to_pure_dict(learner0.get_params()[0]))
+    save_checkpoint(str(fold1), custom_params, {"step": 42, "score": 1.0})
+
+    learner = run_experiment(
+        ExperimentConfig(
+            config=config,
+            environment_factory=lambda seed: make_vec_env(2),
+            max_num_learner_steps=0,
+            init_checkpoint=str(tmp_path / "fold1"),
+        )
+    )
+    assert learner.learn_steps == 0
+    for leaf in jax.tree.leaves(nnx.to_pure_dict(learner.get_params()[0])):
+        np.testing.assert_allclose(np.asarray(leaf), 0.25)
+
+
 def test_cli(tmp_path, monkeypatch):
     monkeypatch.setitem(SIZES, "S", (16, 1, 8))  # preset replaces the layer sizes; keep this smoke test small
     main([

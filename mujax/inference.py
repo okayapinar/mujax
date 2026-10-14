@@ -11,7 +11,7 @@ from flax import nnx
 from mujax.actor import Actor
 from mujax.algorithm import SearchPolicy
 from mujax.algorithms import ALGORITHMS
-from mujax.checkpoint import load_pytree, resolve_checkpoint
+from mujax.checkpoint import load_params, resolve_checkpoint
 from mujax.types import EnvironmentSpec, SearchOutput
 
 
@@ -90,7 +90,7 @@ def load_policy(reference: str, *, seed: int = 0, device: jax.Device | None = No
     config = algorithm.config_cls.from_dict(metadata["config"])
     spec = EnvironmentSpec(**metadata["environment_spec"])
     graphdef, params = algorithm.init(spec, config, jax.random.PRNGKey(0))
-    nnx.replace_by_pure_dict(params, load_pytree(directory, nnx.to_pure_dict(params)))
+    load_params(directory, params)
     search = algorithm.make_policy(graphdef, spec, config, True)
     return Policy(search, params, spec.num_actions, step=metadata["step"], metadata=metadata, seed=seed, device=device)
 

@@ -16,3 +16,5 @@ wandb/
 *.pdf
 checkpoints/
 ckpt/
+_archive/
+pseudocodes/
