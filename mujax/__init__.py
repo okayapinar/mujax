@@ -26,7 +26,7 @@ from mujax.loop import EnvironmentLoop
 from mujax.observers import EnvLoopObserver, InfoKeysObserver
 from mujax.types import EnvironmentSpec, as_vector_env, make_environment_spec
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     "ALGORITHMS",
