@@ -66,6 +66,14 @@ action = policy.act(observation)  # int for one observation, (N,) array for a ba
 
 Environment factories may return a single `gym.Env` (used as `num_envs=1`) or a vector env; vector envs must use `AutoresetMode.SAME_STEP`. See [`examples/`](https://github.com/okayapinar/mujax/tree/master/examples) for training scripts (classic control, Pendulum with discrete torques, FrozenLake, Blackjack) and evaluation (`evaluate.py`).
 
+`profile(experiment)` times that same setup and prints the bottleneck. Pass the `ExperimentConfig` you would train, including a custom `environment_factory`. `examples/profile.py` is the Gymnasium-id command line (`python examples/profile.py smz --size S`).
+
+```python
+from mujax import profile
+
+profile(experiment)
+```
+
 ### Checkpoints
 
 A run writes two checkpoints under `CheckpointingConfig.directory` (`checkpoints/<algo>_<timestamp>/` on the command line):
@@ -117,6 +125,7 @@ On the command line metrics are printed to the terminal (`--no-console` turns it
 | `actor.py`, `learner.py`, `loop.py` | environment interaction, gradient step, environment loop |
 | `observers.py`, `loggers.py`, `checkpoint.py` | metrics, terminal and W&B writers, `best/` and `latest/` checkpoints (Orbax) |
 | `experiment.py` | `ExperimentConfig`, `run_experiment` |
+| `profile.py` | `profile`: bottleneck timings for an `ExperimentConfig` |
 | `inference.py` | `Policy`, `load_policy`, `load_actor`: running a checkpoint outside of training |
 
 ## Development

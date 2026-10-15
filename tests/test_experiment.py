@@ -125,3 +125,36 @@ def test_multiple_actor_threads():
     learner = run_experiment(ExperimentConfig(config=tiny_gmz(), environment_factory=factory, num_actors=3, max_num_learner_steps=4))
     assert learner.learn_steps == 4
     assert seeds == [0, 2, 4]  # actor a gets seed + a * num_envs
+
+
+def test_profile():
+    from conftest import tiny_gmz
+
+    from mujax import EnvLoopObserver, ProfileResult, profile
+
+    observer_calls = []
+
+    class DummyObserver(EnvLoopObserver):
+        def observe_first(self, env, num_envs):
+            observer_calls.append("first")
+
+        def observe(self, env, step):
+            observer_calls.append("step")
+
+        def get_metrics(self, env_idx):
+            return {}
+
+    experiment = ExperimentConfig(
+        config=tiny_gmz(),
+        environment_factory=lambda seed: make_vec_env(2),
+        max_num_learner_steps=10,
+        observer_factories=[DummyObserver],
+    )
+    result = profile(experiment, actor_iters=4, learner_iters=2, concurrent_seconds=0.1)
+    assert isinstance(result, ProfileResult)
+    assert "param_sync (device_put)" in result.actor
+    assert "select_action (MCTS)" in result.actor
+    assert "actor.observe (replay)" in result.actor
+    assert "learner.gradient_step" in result.learner
+    assert result.concurrent is not None
+    assert "step" in observer_calls

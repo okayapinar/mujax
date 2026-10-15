@@ -10,6 +10,7 @@ Module map:
     actor.py / learner.py / loop.py  environment interaction, gradient step, env loop
     observers.py / loggers.py / checkpoint.py  metrics, terminal/W&B writers, best/latest checkpoints (Orbax)
     experiment.py  ExperimentConfig, run_experiment
+    profile.py     profile: bottleneck timings for an ExperimentConfig
     inference.py   Policy, load_policy, load_actor: running a checkpoint outside of training
 """
 
@@ -24,9 +25,10 @@ from mujax.learner import Learner
 from mujax.loggers import ConsoleWriter, Logger, WandbWriter, Writer, create_writer
 from mujax.loop import EnvironmentLoop
 from mujax.observers import EnvLoopObserver, InfoKeysObserver
+from mujax.profile import ProfileResult, profile
 from mujax.types import EnvironmentSpec, as_vector_env, make_environment_spec
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 __all__ = [
     "ALGORITHMS",
@@ -47,6 +49,7 @@ __all__ = [
     "Logger",
     "MuZeroConfig",
     "Policy",
+    "ProfileResult",
     "SMZConfig",
     "WandbWriter",
     "Writer",
@@ -56,5 +59,6 @@ __all__ = [
     "load_actor",
     "load_policy",
     "make_environment_spec",
+    "profile",
     "run_experiment",
 ]
