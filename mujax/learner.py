@@ -78,9 +78,9 @@ class Learner:
         (_, metrics), grads = jax.value_and_grad(self._loss_fn, has_aux=True)(params, batch)
         updates, opt_state = self._optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
-        metrics["grad_norm"] = optax.global_norm(grads)
-        metrics["update_norm"] = optax.global_norm(updates)
-        metrics["param_norm"] = optax.global_norm(params)
+        metrics["grad_norm"] = optax.tree.norm(grads)
+        metrics["update_norm"] = optax.tree.norm(updates)
+        metrics["param_norm"] = optax.tree.norm(params)
         return params, opt_state, metrics
 
     def _log(self, metrics: dict[str, jnp.ndarray], counts: dict[str, int]) -> None:

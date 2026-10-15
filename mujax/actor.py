@@ -60,11 +60,15 @@ class Actor:
         self._episode_start = True
         self._last_search: SearchOutput | None = None
         self._invalid_actions: np.ndarray | None = None
+        self._params: tuple[Any, int] | None = None
         self._pull_params()
 
     def _pull_params(self) -> None:
         params, learner_steps = self._get_params()
-        self._params = (jax.device_put(params, self._device), learner_steps)  # single assignment
+        if self._params is not None and self._params[1] == learner_steps:
+            return
+        device_params = jax.device_put(params, self._device)
+        self._params = (device_params, learner_steps)  # single assignment
 
     def get_params(self) -> tuple[Any, int]:
         """The (params, learner_steps) currently playing."""

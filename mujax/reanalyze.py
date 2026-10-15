@@ -57,12 +57,13 @@ class Reanalyzer:
         return self
 
     def __next__(self) -> Any:
+        next_key, sample_key, search_key = jax.random.split(self._key, 3)
         while not self._stop_event.is_set():
-            self._key, sample_key, search_key = jax.random.split(self._key, 3)
             sample = self._replay.sample(sample_key)
             if sample is None:
                 time.sleep(_IDLE_SLEEP_SEC)
                 continue
+            self._key = next_key
             sample = jax.device_put(sample, self._device)
             if self._num_reanalyze > 0:
                 params, learner_steps = self._get_params()

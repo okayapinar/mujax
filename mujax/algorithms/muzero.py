@@ -198,16 +198,19 @@ def value_targets(config: MuZeroConfig, experience: Any) -> jnp.ndarray:
 
 
 def make_targets(config: MuZeroConfig, support: Support, experience: Any) -> tuple[Targets, jnp.ndarray]:
-    """Builds loss targets from replay transitions (B, T, ...)."""
+    """Builds loss targets for the root + K unroll steps from replay transitions (B, T, ...)."""
+    steps = config.num_unroll_steps + 1
     value_target = value_targets(config, experience)
-    alive = experience.discount * (1.0 - experience.truncated)
-    in_episode = jnp.concatenate([jnp.ones_like(alive[:, :1]), jnp.cumprod(alive[:, :-1], axis=-1)], axis=-1)
+    alive = experience.discount[:, :steps] * (1.0 - experience.truncated[:, :steps])
+    first_step = jnp.ones_like(alive[:, :1])
+    later_steps = jnp.cumprod(alive[:, :-1], axis=-1)
+    in_episode = jnp.concatenate([first_step, later_steps], axis=-1)
     targets = Targets(
-        observation=experience.observation,
-        action=experience.action,
-        reward_probs=support.to_probs(experience.reward),
-        value_probs=support.to_probs(value_target),
-        policy_probs=experience.policy_probs,
+        observation=experience.observation[:, :steps],
+        action=experience.action[:, :steps],
+        reward_probs=support.to_probs(experience.reward[:, :steps]),
+        value_probs=support.to_probs(value_target[:, :steps]),
+        policy_probs=experience.policy_probs[:, :steps],
         in_episode=in_episode,
     )
     return targets, value_target
@@ -246,7 +249,7 @@ def loss(
         next_latent, step_losses = unroll_step(model, latent, now_t, next_t)
         return scale_gradient(next_latent, config.latent_gradient_scale), step_losses
 
-    _, unroll_losses = jax.lax.scan(scan_step, latent, (now, next_))
+    _, unroll_losses = jax.lax.scan(scan_step, latent, (now, next_), unroll=k)
     unroll_losses = {name: jnp.mean(values) for name, values in unroll_losses.items()}
     unroll_loss = sum(loss_weights.get(name, 1.0) * value for name, value in unroll_losses.items())
     total_loss = root_loss + unroll_loss
