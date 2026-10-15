@@ -5,7 +5,6 @@ from __future__ import annotations
 import abc
 from collections.abc import Sequence
 
-import distrax
 import gymnasium as gym
 import numpy as np
 
@@ -49,9 +48,9 @@ class PolicyEntropyObserver(EnvLoopObserver):
     def observe(self, env, step: TimeStep) -> None:
         if step.search is None:
             return
-        policy = distrax.Categorical(probs=step.search.policy_probs)
-        entropy = np.asarray(policy.entropy(), dtype=np.float64)
-        self._sum += entropy
+        probs = np.asarray(step.search.policy_probs, dtype=np.float64)
+        log_probs = np.log(probs, where=probs > 0, out=np.zeros_like(probs))
+        self._sum += -np.sum(probs * log_probs, axis=-1)
         self._steps += 1
 
     def get_metrics(self, index: int) -> dict[str, float]:
