@@ -6,7 +6,7 @@ from flax import nnx
 
 from mujax.algorithms import GMZConfig, SMZConfig
 from mujax.algorithms.gmz import GMZModel
-from mujax.algorithms.muzero import Embedding, SymlogInput, unimix_logits
+from mujax.algorithms.muzero import Embedding, Head, SymlogInput, unimix_logits
 from mujax.algorithms.smz import SMZModel
 from mujax.types import EnvironmentSpec
 
@@ -48,3 +48,14 @@ def test_models_apply_unimix_to_policy_logits():
         _, policy_logits = model.prediction(latent)
         np.testing.assert_allclose(policy_logits, unimix_logits(model.prediction.policy(latent), unimix), rtol=1e-6)
         assert jnp.all(jax.nn.softmax(policy_logits) >= unimix / 4 - 1e-7)
+
+        smz = SMZModel(spec, SMZConfig(representation_layer_sizes=(8,), decision_layer_sizes=(8,), embedding_dim=4, num_bins=5, codebook_size=6, policy_unimix=unimix), rngs=nnx.Rngs(0))
+        afterstate, chance_logits, _ = smz.decision(smz.representation(obs), jnp.array([0]))
+        np.testing.assert_allclose(chance_logits, unimix_logits(smz.decision.chance_logits(afterstate), unimix), rtol=1e-6)
+        assert jnp.all(jax.nn.softmax(chance_logits) >= unimix / 6 - 1e-7)
+
+
+def test_head_zero_init_by_default():
+    x = jnp.array([[1.0, -2.0, 3.0]])
+    np.testing.assert_array_equal(Head(3, (8,), 5, rngs=nnx.Rngs(0))(x), 0.0)
+    assert jnp.any(Head(3, (8,), 5, zero_init=False, rngs=nnx.Rngs(0))(x) != 0.0)

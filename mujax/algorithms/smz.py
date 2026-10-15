@@ -69,15 +69,26 @@ def puct_exploration(config: SMZConfig, num_actions: int, evaluation: bool) -> C
 class Decision(nnx.Module):
     """(latent, action) -> afterstate; chance logits and afterstate value from the afterstate."""
 
-    def __init__(self, embedding_dim: int, layer_sizes: Sequence[int], codebook_size: int, num_actions: int, num_bins: int, *, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        embedding_dim: int,
+        layer_sizes: Sequence[int],
+        codebook_size: int,
+        num_actions: int,
+        num_bins: int,
+        *,
+        unimix: float = 0.0,
+        rngs: nnx.Rngs,
+    ):
         self.num_actions = num_actions
+        self.unimix = float(unimix)
         self.afterstate = Embedding(embedding_dim + num_actions, layer_sizes, embedding_dim, rngs=rngs)
         self.chance_logits = Head(embedding_dim, layer_sizes, codebook_size, rngs=rngs)
         self.afterstate_value = Head(embedding_dim, layer_sizes, num_bins, rngs=rngs)
 
     def __call__(self, latent, action) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         afterstate = self.afterstate(muzero.one_hot_concat(latent, action, self.num_actions))
-        return afterstate, self.chance_logits(afterstate), self.afterstate_value(afterstate)
+        return afterstate, muzero.unimix_logits(self.chance_logits(afterstate), self.unimix), self.afterstate_value(afterstate)
 
 
 class Chance(nnx.Module):
@@ -95,10 +106,10 @@ class Chance(nnx.Module):
 class SMZModel(nnx.Module):
     def __init__(self, spec: EnvironmentSpec, config: SMZConfig, rngs: nnx.Rngs):
         d, k = config.embedding_dim, config.codebook_size
-        self.encoder = SymlogInput(Head(spec.obs_dim, config.encoder_layer_sizes, k, rngs=rngs))  # obs -> codebook logits (VQ-VAE encoder)
+        self.encoder = SymlogInput(Head(spec.obs_dim, config.encoder_layer_sizes, k, zero_init=False, rngs=rngs))  # obs -> codebook logits (VQ-VAE encoder)
         self.representation = SymlogInput(Embedding(spec.obs_dim, config.representation_layer_sizes, d, rngs=rngs))
         self.prediction = Prediction(d, config.prediction_layer_sizes, spec.num_actions, config.num_bins, unimix=config.policy_unimix, rngs=rngs)
-        self.decision = Decision(d, config.decision_layer_sizes, k, spec.num_actions, config.num_bins, rngs=rngs)
+        self.decision = Decision(d, config.decision_layer_sizes, k, spec.num_actions, config.num_bins, unimix=config.policy_unimix, rngs=rngs)
         self.chance = Chance(d, config.chance_layer_sizes, k, config.num_bins, rngs=rngs)
 
 
@@ -156,7 +167,7 @@ def loss(graphdef: nnx.GraphDef, config: SMZConfig, params: nnx.State, batch) ->
         value_logits, policy_logits = model.prediction(next_latent)
         losses = {
             "afterstate_value": muzero.masked_mean(muzero.cross_entropy(afterstate_value_logits, now.value_probs), now.in_episode),
-            "chance": muzero.masked_mean(muzero.cross_entropy(chance_logits, code), next_.in_episode),
+            "chance": muzero.masked_mean(muzero.cross_entropy(chance_logits, code_onehot), next_.in_episode),
             "reward": muzero.masked_mean(muzero.cross_entropy(reward_logits, now.reward_probs), now.in_episode),
             "value": muzero.masked_mean(muzero.cross_entropy(value_logits, next_.value_probs), next_.in_episode),
             "policy": muzero.masked_mean(muzero.cross_entropy(policy_logits, next_.policy_probs), next_.in_episode),

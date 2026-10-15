@@ -92,11 +92,12 @@ class LayerNormMLP(nnx.Module):
 
 
 class Head(nnx.Module):
-    """LayerNormMLP + linear output; used for policy/value/reward logits."""
+    """LayerNormMLP + linear output; used for policy/value/reward logits (zero-initialized by default)."""
 
-    def __init__(self, in_features: int, layer_sizes: Sequence[int], output_dim: int, *, rngs: nnx.Rngs):
+    def __init__(self, in_features: int, layer_sizes: Sequence[int], output_dim: int, *, zero_init: bool = True, rngs: nnx.Rngs):
         self.mlp = LayerNormMLP(in_features, layer_sizes, rngs=rngs)
-        self.out = nnx.Linear(self.mlp.out_features, output_dim, rngs=rngs)
+        kernel_init = nnx.initializers.zeros_init() if zero_init else nnx.initializers.lecun_normal()
+        self.out = nnx.Linear(self.mlp.out_features, output_dim, kernel_init=kernel_init, rngs=rngs)
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         return self.out(self.mlp(x))
@@ -106,7 +107,7 @@ class Embedding(nnx.Module):
     """Head + min-max normalization; used by networks that produce latent states (representation, dynamics, afterstate)."""
 
     def __init__(self, in_features: int, layer_sizes: Sequence[int], embedding_dim: int, *, rngs: nnx.Rngs):
-        self.head = Head(in_features, layer_sizes, embedding_dim, rngs=rngs)
+        self.head = Head(in_features, layer_sizes, embedding_dim, zero_init=False, rngs=rngs)
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         return min_max_normalize(self.head(x))
