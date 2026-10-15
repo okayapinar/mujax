@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Sequence
-from typing import Any, Self
+from collections.abc import Sequence
+from typing import Self
 
-import distrax
 import jax
 import jax.numpy as jnp
 import mctx
@@ -14,7 +13,7 @@ from flax import nnx
 
 from mujax.algorithm import Algorithm, SearchPolicy
 from mujax.algorithms import muzero
-from mujax.algorithms.muzero import Embedding, Head, Prediction, Support, SymlogInput, Targets
+from mujax.algorithms.muzero import Embedding, Head, Prediction, Support, SymlogInput, Targets, cross_entropy, masked_mean
 from mujax.config import MuZeroConfig
 from mujax.types import EnvironmentSpec, SearchOutput
 
@@ -47,27 +46,8 @@ class SMZConfig(MuZeroConfig):
         return dataclasses.replace(super().with_num_steps(num_steps), temperature_decay_steps=num_steps)
 
 
-def puct_exploration(config: SMZConfig, num_actions: int, evaluation: bool) -> Callable[[Any], dict[str, Any]]:
-    """learner_steps -> exploration kwargs of the mctx PUCT policy. Evaluation turns off temperature and noise."""
-    dirichlet_alpha = 1.0 / num_actions**0.5 if config.dirichlet_alpha is None else config.dirichlet_alpha
-    half = int(0.5 * config.temperature_decay_steps)
-    three_quarters = int(0.75 * config.temperature_decay_steps)
-
-    def kwargs(learner_steps):
-        temperature = jnp.where(learner_steps < half, 1.0, jnp.where(learner_steps < three_quarters, 0.5, 0.25))
-        return {
-            "temperature": 0.0 if evaluation else temperature,
-            "dirichlet_fraction": 0.0 if evaluation else config.dirichlet_fraction,
-            "dirichlet_alpha": dirichlet_alpha,
-            "pb_c_init": config.pb_c_init,
-            "pb_c_base": config.pb_c_base,
-        }
-
-    return kwargs
-
-
 class Decision(nnx.Module):
-    """(latent, action) -> afterstate; chance logits and afterstate value from the afterstate."""
+    """(latent, action) -> (afterstate, chance_logits, afterstate_value_logits)."""
 
     def __init__(
         self,
@@ -92,7 +72,7 @@ class Decision(nnx.Module):
 
 
 class Chance(nnx.Module):
-    """(afterstate, chance_code) -> (next_latent, reward_logits). The code is one-hot (search) or straight-through (learner)."""
+    """(afterstate, chance_code) -> (next_latent, reward_logits)."""
 
     def __init__(self, embedding_dim: int, layer_sizes: Sequence[int], codebook_size: int, num_bins: int, *, rngs: nnx.Rngs):
         self.embedding = Embedding(embedding_dim + codebook_size, layer_sizes, embedding_dim, rngs=rngs)
@@ -106,7 +86,7 @@ class Chance(nnx.Module):
 class SMZModel(nnx.Module):
     def __init__(self, spec: EnvironmentSpec, config: SMZConfig, rngs: nnx.Rngs):
         d, k = config.embedding_dim, config.codebook_size
-        self.encoder = SymlogInput(Head(spec.obs_dim, config.encoder_layer_sizes, k, zero_init=False, rngs=rngs))  # obs -> codebook logits (VQ-VAE encoder)
+        self.encoder = SymlogInput(Head(spec.obs_dim, config.encoder_layer_sizes, k, zero_init=False, rngs=rngs))
         self.representation = SymlogInput(Embedding(spec.obs_dim, config.representation_layer_sizes, d, rngs=rngs))
         self.prediction = Prediction(d, config.prediction_layer_sizes, spec.num_actions, config.num_bins, unimix=config.policy_unimix, rngs=rngs)
         self.decision = Decision(d, config.decision_layer_sizes, k, spec.num_actions, config.num_bins, unimix=config.policy_unimix, rngs=rngs)
@@ -116,8 +96,9 @@ class SMZModel(nnx.Module):
 def make_policy(graphdef: nnx.GraphDef, spec: EnvironmentSpec, config: SMZConfig, evaluation: bool) -> SearchPolicy:
     """Batched Stochastic MuZero search. `evaluation=True` turns off temperature and Dirichlet noise."""
     support = Support.from_config(config)
-    codebook_size = config.codebook_size
-    exploration = puct_exploration(config, spec.num_actions, evaluation)
+    dirichlet_alpha = 1.0 / spec.num_actions**0.5 if config.dirichlet_alpha is None else config.dirichlet_alpha
+    half = int(0.5 * config.temperature_decay_steps)
+    three_quarters = int(0.75 * config.temperature_decay_steps)
 
     def decision_fn(params, key, action, latent):
         afterstate, chance_logits, afterstate_value_logits = nnx.merge(graphdef, params).decision(latent, action)
@@ -126,7 +107,7 @@ def make_policy(graphdef: nnx.GraphDef, spec: EnvironmentSpec, config: SMZConfig
 
     def chance_fn(params, key, chance_outcome, afterstate):
         model = nnx.merge(graphdef, params)
-        next_latent, reward_logits = model.chance(afterstate, jax.nn.one_hot(chance_outcome, codebook_size))
+        next_latent, reward_logits = model.chance(afterstate, jax.nn.one_hot(chance_outcome, config.codebook_size))
         value_logits, policy_logits = model.prediction(next_latent)
         reward = support.logits_to_scalar(reward_logits)
         output = mctx.ChanceRecurrentFnOutput(
@@ -138,6 +119,7 @@ def make_policy(graphdef: nnx.GraphDef, spec: EnvironmentSpec, config: SMZConfig
         return output, next_latent
 
     def policy(params, obs, key, invalid_actions, learner_steps) -> SearchOutput:
+        temperature = 0.0 if evaluation else jnp.where(learner_steps < half, 1.0, jnp.where(learner_steps < three_quarters, 0.5, 0.25))
         out = mctx.stochastic_muzero_policy(
             params,
             key,
@@ -147,7 +129,11 @@ def make_policy(graphdef: nnx.GraphDef, spec: EnvironmentSpec, config: SMZConfig
             num_simulations=config.num_simulations,
             invalid_actions=invalid_actions,
             qtransform=mctx.qtransform_by_parent_and_siblings,
-            **exploration(learner_steps),
+            temperature=temperature,
+            dirichlet_fraction=0.0 if evaluation else config.dirichlet_fraction,
+            dirichlet_alpha=dirichlet_alpha,
+            pb_c_init=config.pb_c_init,
+            pb_c_base=config.pb_c_base,
         )
         return SearchOutput(out.action, out.action_weights, out.search_tree.summary().value)
 
@@ -158,29 +144,26 @@ def loss(graphdef: nnx.GraphDef, config: SMZConfig, params: nnx.State, batch) ->
     def unroll_step(model: SMZModel, latent, now: Targets, next_: Targets):
         afterstate, chance_logits, afterstate_value_logits = model.decision(latent, now.action)
 
-        # VQ-VAE: code of the next observation; the gradient flows to the encoder via straight-through.
+        # VQ-VAE: one-hot code of the next observation with straight-through gradients to the encoder.
         code_logits = model.encoder(next_.observation)
-        code_onehot = jax.nn.one_hot(jnp.argmax(code_logits, axis=-1), code_logits.shape[-1])
+        code_onehot = jax.nn.one_hot(jnp.argmax(code_logits, axis=-1), config.codebook_size)
         code = code_logits + jax.lax.stop_gradient(code_onehot - code_logits)
 
         next_latent, reward_logits = model.chance(afterstate, code)
         value_logits, policy_logits = model.prediction(next_latent)
+        commitment = jnp.sum(jnp.square(code_logits - jax.lax.stop_gradient(code_onehot)), axis=-1)
         losses = {
-            "afterstate_value": muzero.masked_mean(muzero.cross_entropy(afterstate_value_logits, now.value_probs), now.in_episode),
-            "chance": muzero.masked_mean(muzero.cross_entropy(chance_logits, code_onehot), next_.in_episode),
-            "reward": muzero.masked_mean(muzero.cross_entropy(reward_logits, now.reward_probs), now.in_episode),
-            "value": muzero.masked_mean(muzero.cross_entropy(value_logits, next_.value_probs), next_.in_episode),
-            "policy": muzero.masked_mean(muzero.cross_entropy(policy_logits, next_.policy_probs), next_.in_episode),
-            # Paper: commitment loss β‖cᵉ − sg(c)‖² (squared L2 norm, summed over dimensions).
-            "commitment": muzero.masked_mean(jnp.sum(jnp.square(code_logits - jax.lax.stop_gradient(code_onehot)), axis=-1), next_.in_episode),
+            "afterstate_value": cross_entropy(afterstate_value_logits, now.value_probs, now.in_episode),
+            "chance": cross_entropy(chance_logits, code_onehot, next_.in_episode),
+            "reward": cross_entropy(reward_logits, now.reward_probs, now.in_episode),
+            "value": cross_entropy(value_logits, next_.value_probs, next_.in_episode),
+            "policy": cross_entropy(policy_logits, next_.policy_probs, next_.in_episode),
+            "commitment": masked_mean(commitment, next_.in_episode),
         }
-        return next_latent, losses, {"code_usage": jnp.mean(code_onehot, axis=0)}
+        return next_latent, losses
 
     loss_weights = {"value": config.value_loss_weight, "afterstate_value": config.value_loss_weight, "commitment": config.vqvae_beta}
-    total_loss, metrics = muzero.loss(graphdef, config, params, batch, unroll_step=unroll_step, loss_weights=loss_weights)
-    code_usage = jnp.mean(metrics.pop("code_usage"), axis=0)  # (K, codebook) -> (codebook,)
-    metrics["chance_code_perplexity"] = jnp.exp(distrax.Categorical(probs=code_usage).entropy())
-    return total_loss, metrics
+    return muzero.loss(graphdef, config, params, batch, unroll_step=unroll_step, loss_weights=loss_weights)
 
 
 SMZ = Algorithm("smz", SMZConfig, SMZModel, make_policy, loss, muzero.make_value_fn)
