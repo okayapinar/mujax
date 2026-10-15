@@ -82,7 +82,8 @@ class Actor:
 
         params, learner_steps = self._params
         self._key, search_key = jax.random.split(self._key)
-        search = self._search(params, np.asarray(observation, dtype=np.float32), search_key, self._invalid_actions, learner_steps)
+        observation = np.asarray(observation, dtype=np.float32)
+        search = self._search(params, observation, search_key, self._invalid_actions, learner_steps)
         self._last_search = SearchOutput(
             action=np.asarray(search.action, dtype=np.int32),
             policy_probs=np.asarray(search.policy_probs, dtype=np.float32),
@@ -96,10 +97,12 @@ class Actor:
         if not truncated.any():
             return values
         # To call the jit with a single shape, the whole batch is filled; non-truncated rows are discarded.
-        obs = np.zeros_like(np.asarray(step.observation), dtype=np.float32)
+        raw_obs = np.asarray(step.observation)
+        obs = np.zeros_like(raw_obs, dtype=np.float32)
         for index in np.flatnonzero(truncated):
             obs[index] = step.info["final_obs"][index]
-        values[truncated] = np.asarray(self._value(self._params[0], obs))[truncated]
+        values_batch = np.asarray(self._value(self._params[0], obs))
+        values[truncated] = values_batch[truncated]
         return values
 
     def last_search(self) -> SearchOutput | None:

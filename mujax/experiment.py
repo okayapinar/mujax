@@ -146,7 +146,10 @@ def setup_devices() -> tuple[jax.Device, jax.Device]:
 def make_optimizer(c: MuZeroConfig) -> optax.GradientTransformation:
     lr_schedule = optax.warmup_constant_schedule(init_value=0.0, peak_value=c.learning_rate, warmup_steps=c.lr_warmup_steps)
     adamw = optax.adamw(lr_schedule, b1=c.adam_b1, b2=c.adam_b2, weight_decay=c.weight_decay)
-    return optax.chain(optax.clip_by_global_norm(c.max_grad_norm), adamw) if c.max_grad_norm > 0 else adamw
+    if c.max_grad_norm <= 0:
+        return adamw
+    clip = optax.clip_by_global_norm(c.max_grad_norm)
+    return optax.chain(clip, adamw)
 
 
 class _Worker(threading.Thread):

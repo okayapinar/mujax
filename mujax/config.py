@@ -73,7 +73,8 @@ class MuZeroConfig:
 
     def with_num_steps(self, num_steps: int) -> Self:
         """Caps the LR warmup at a tenth of the total number of learner steps (short runs)."""
-        return dataclasses.replace(self, lr_warmup_steps=min(self.lr_warmup_steps, num_steps // 10))
+        warmup_steps = min(self.lr_warmup_steps, num_steps // 10)
+        return dataclasses.replace(self, lr_warmup_steps=warmup_steps)
 
     def with_size(self, size: str) -> Self:
         """Sets every `*_layer_sizes` field and `embedding_dim` from the `SIZES` preset ("XS", "S", "M", "L", "XL")."""

@@ -50,4 +50,5 @@ class Algorithm:
 
     def init(self, spec: EnvironmentSpec, config: MuZeroConfig, key: jax.Array) -> tuple[nnx.GraphDef, nnx.State]:
         """(graphdef, params) of a freshly initialized model."""
-        return nnx.split(self.make_model(spec, config, nnx.Rngs(key)))
+        model = self.make_model(spec, config, nnx.Rngs(key))
+        return nnx.split(model)

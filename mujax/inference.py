@@ -68,8 +68,10 @@ class Policy:
         """Action for one observation `(obs_dim,)` (an int) or a batch `(N, obs_dim)` (an `(N,)` array)."""
         obs = np.asarray(observation, dtype=np.float32)
         if obs.ndim == 1:
-            return int(self.search(obs[None], invalid_actions).action[0])
-        return self.search(obs, invalid_actions).action
+            search = self.search(obs[None], invalid_actions)
+            return int(search.action[0])
+        search = self.search(obs, invalid_actions)
+        return search.action
 
     def actor(self, *, seed: int = 0) -> Actor:
         """An evaluation `Actor` (batched env interface) with these params, e.g. for `EnvironmentLoop`."""

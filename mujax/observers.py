@@ -49,7 +49,9 @@ class PolicyEntropyObserver(EnvLoopObserver):
     def observe(self, env, step: TimeStep) -> None:
         if step.search is None:
             return
-        self._sum += np.asarray(distrax.Categorical(probs=step.search.policy_probs).entropy(), dtype=np.float64)
+        policy = distrax.Categorical(probs=step.search.policy_probs)
+        entropy = np.asarray(policy.entropy(), dtype=np.float64)
+        self._sum += entropy
         self._steps += 1
 
     def get_metrics(self, index: int) -> dict[str, float]:

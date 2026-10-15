@@ -66,7 +66,8 @@ class Reanalyzer:
             sample = jax.device_put(sample, self._device)
             if self._num_reanalyze > 0:
                 params, learner_steps = self._get_params()
-                sample = dataclasses.replace(sample, experience=self._refresh(params, sample.experience, search_key, learner_steps))
+                experience = self._refresh(params, sample.experience, search_key, learner_steps)
+                sample = dataclasses.replace(sample, experience=experience)
             return sample
         raise StopIteration
 
@@ -75,13 +76,17 @@ class Reanalyzer:
         obs = traj.observation[:n]
         t = obs.shape[1]
 
-        search = self._policy(params, obs[:, :k].reshape(n * k, -1), key, traj.invalid_actions[:n, :k].reshape(n * k, -1), learner_steps)
+        search_obs = obs[:, :k].reshape(n * k, -1)
+        invalid = traj.invalid_actions[:n, :k].reshape(n * k, -1)
+        search = self._policy(params, search_obs, key, invalid, learner_steps)
         value = search.value.reshape(n, k)
         if t > k:
-            tail_value = self._value_fn(params, obs[:, k:].reshape(n * (t - k), -1)).reshape(n, t - k)
+            tail_obs = obs[:, k:].reshape(n * (t - k), -1)
+            tail_value = self._value_fn(params, tail_obs).reshape(n, t - k)
             value = jnp.concatenate([value, tail_value], axis=1)
 
+        policy_probs = search.policy_probs.reshape(n, k, -1)
         return traj._replace(
-            policy_probs=traj.policy_probs.at[:n, :k].set(search.policy_probs.reshape(n, k, -1)),
+            policy_probs=traj.policy_probs.at[:n, :k].set(policy_probs),
             value=traj.value.at[:n].set(value),
         )

@@ -40,14 +40,17 @@ class Dynamics(nnx.Module):
         self.reward = Head(embedding_dim, layer_sizes, num_bins, rngs=rngs)
 
     def __call__(self, latent, action) -> tuple[jnp.ndarray, jnp.ndarray]:
-        next_latent = self.embedding(muzero.one_hot_concat(latent, action, self.num_actions))
-        return next_latent, self.reward(next_latent)
+        latent_action = muzero.one_hot_concat(latent, action, self.num_actions)
+        next_latent = self.embedding(latent_action)
+        reward_logits = self.reward(next_latent)
+        return next_latent, reward_logits
 
 
 class GMZModel(nnx.Module):
     def __init__(self, spec: EnvironmentSpec, config: GMZConfig, rngs: nnx.Rngs):
         d = config.embedding_dim
-        self.representation = SymlogInput(Embedding(spec.obs_dim, config.representation_layer_sizes, d, rngs=rngs))
+        representation = Embedding(spec.obs_dim, config.representation_layer_sizes, d, rngs=rngs)
+        self.representation = SymlogInput(representation)
         self.prediction = Prediction(d, config.prediction_layer_sizes, spec.num_actions, config.num_bins, unimix=config.policy_unimix, rngs=rngs)
         self.dynamics = Dynamics(d, config.dynamics_layer_sizes, spec.num_actions, config.num_bins, rngs=rngs)
 
@@ -63,20 +66,23 @@ def make_policy(graphdef: nnx.GraphDef, spec: EnvironmentSpec, config: GMZConfig
         next_latent, reward_logits = model.dynamics(latent, action)
         value_logits, policy_logits = model.prediction(next_latent)
         reward = support.logits_to_scalar(reward_logits)
+        value = support.logits_to_scalar(value_logits)
         output = mctx.RecurrentFnOutput(
             reward=reward,
             discount=jnp.full_like(reward, config.discount),
             prior_logits=policy_logits,
-            value=support.logits_to_scalar(value_logits),
+            value=value,
         )
         return output, next_latent
 
     def policy(params, obs, key, invalid_actions, learner_steps) -> SearchOutput:
         del learner_steps
+        model = nnx.merge(graphdef, params)
+        root = muzero.root_output(model, support, obs)
         out = mctx.gumbel_muzero_policy(
             params,
             key,
-            muzero.root_output(nnx.merge(graphdef, params), support, obs),
+            root,
             recurrent_fn,
             num_simulations=config.num_simulations,
             invalid_actions=invalid_actions,
@@ -85,7 +91,8 @@ def make_policy(graphdef: nnx.GraphDef, spec: EnvironmentSpec, config: GMZConfig
             max_num_considered_actions=max_num_considered_actions,
             gumbel_scale=0.0 if evaluation else config.gumbel_scale,
         )
-        return SearchOutput(out.action, out.action_weights, out.search_tree.summary().value)
+        value = out.search_tree.summary().value
+        return SearchOutput(out.action, out.action_weights, value)
 
     return policy
 

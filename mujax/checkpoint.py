@@ -96,7 +96,8 @@ def resolve_checkpoint(reference: str) -> tuple[str, dict[str, Any]]:
 def load_params(reference: str, params: nnx.State) -> dict[str, Any]:
     """Replaces `params` in place from a best-params checkpoint (`resolve_checkpoint`) and returns its metadata."""
     directory, metadata = resolve_checkpoint(reference)
-    nnx.replace_by_pure_dict(params, load_pytree(directory, nnx.to_pure_dict(params)))
+    loaded = load_pytree(directory, nnx.to_pure_dict(params))
+    nnx.replace_by_pure_dict(params, loaded)
     return metadata
 
 

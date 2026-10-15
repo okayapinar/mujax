@@ -39,19 +39,25 @@ class Support(NamedTuple):
 
     def to_probs(self, x: jnp.ndarray) -> jnp.ndarray:
         """Scalar -> probabilities over the bins."""
-        center = jnp.clip(rlax.signed_logp1(x), self.min, self.max)[..., None]
+        symlog = rlax.signed_logp1(x)
+        center = jnp.clip(symlog, self.min, self.max)[..., None]
         scale = self.sigma_scale * self.bin_width
         half = self.bin_width / 2
         cdf = jax.scipy.stats.norm.cdf
-        probs = cdf(self.bin_centers + half, loc=center, scale=scale) - cdf(self.bin_centers - half, loc=center, scale=scale)
-        return probs / jnp.maximum(jnp.sum(probs, axis=-1, keepdims=True), 1e-8)
+        upper = cdf(self.bin_centers + half, loc=center, scale=scale)
+        lower = cdf(self.bin_centers - half, loc=center, scale=scale)
+        probs = upper - lower
+        total = jnp.sum(probs, axis=-1, keepdims=True)
+        return probs / jnp.maximum(total, 1e-8)
 
     def to_scalar(self, probs: jnp.ndarray) -> jnp.ndarray:
         """Inverse of `to_probs`: expectation in symlog space, then symexp."""
-        return rlax.signed_expm1(rlax.transform_from_2hot(probs, self.min, self.max, self.num_bins))
+        symlog = rlax.transform_from_2hot(probs, self.min, self.max, self.num_bins)
+        return rlax.signed_expm1(symlog)
 
     def logits_to_scalar(self, logits: jnp.ndarray) -> jnp.ndarray:
-        return self.to_scalar(jax.nn.softmax(logits))
+        probs = jax.nn.softmax(logits)
+        return self.to_scalar(probs)
 
 
 class SymlogInput(nnx.Module):
@@ -61,7 +67,8 @@ class SymlogInput(nnx.Module):
         self.net = net
 
     def __call__(self, obs: jnp.ndarray) -> jnp.ndarray:
-        return self.net(rlax.signed_logp1(obs))
+        obs = rlax.signed_logp1(obs)
+        return self.net(obs)
 
 
 class Head(nnx.Module):
@@ -87,7 +94,8 @@ class Embedding(nnx.Module):
         self.head = Head(in_features, layer_sizes, embedding_dim, zero_init=False, rngs=rngs)
 
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        return min_max_normalize(self.head(x))
+        x = self.head(x)
+        return min_max_normalize(x)
 
 
 class Prediction(nnx.Module):
@@ -99,7 +107,9 @@ class Prediction(nnx.Module):
         self.unimix = float(unimix)
 
     def __call__(self, latent: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        return self.value(latent), unimix_logits(self.policy(latent), self.unimix)
+        value_logits = self.value(latent)
+        policy_logits = self.policy(latent)
+        return value_logits, unimix_logits(policy_logits, self.unimix)
 
 
 def unimix_logits(logits: jnp.ndarray, ratio: float) -> jnp.ndarray:
@@ -131,13 +141,19 @@ def root_output(model: Any, support: Support, obs: jnp.ndarray) -> mctx.RootFnOu
     """representation -> prediction; root input of the mctx search."""
     embedding = model.representation(obs)
     value_logits, policy_logits = model.prediction(embedding)
-    return mctx.RootFnOutput(prior_logits=policy_logits, value=support.logits_to_scalar(value_logits), embedding=embedding)
+    value = support.logits_to_scalar(value_logits)
+    return mctx.RootFnOutput(prior_logits=policy_logits, value=value, embedding=embedding)
 
 
 def make_value_fn(graphdef: nnx.GraphDef, config: MuZeroConfig) -> ValueFn:
     """(params, obs) -> search-free root value (N,); used for the bootstrap tail in reanalyze."""
     support = Support.from_config(config)
-    return lambda params, obs: root_output(nnx.merge(graphdef, params), support, obs).value
+
+    def value_fn(params, obs):
+        model = nnx.merge(graphdef, params)
+        return root_output(model, support, obs).value
+
+    return value_fn
 
 
 class Targets(NamedTuple):
@@ -160,8 +176,11 @@ def masked_mean(values: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
 
 
 def cross_entropy(logits: jnp.ndarray, target_probs: jnp.ndarray, mask: jnp.ndarray | None = None) -> jnp.ndarray:
-    losses = optax.softmax_cross_entropy(logits, jax.lax.stop_gradient(target_probs))
-    return jnp.mean(losses) if mask is None else masked_mean(losses, mask)
+    targets = jax.lax.stop_gradient(target_probs)
+    losses = optax.softmax_cross_entropy(logits, targets)
+    if mask is None:
+        return jnp.mean(losses)
+    return masked_mean(losses, mask)
 
 
 def value_targets(config: MuZeroConfig, experience: Any) -> jnp.ndarray:
@@ -170,8 +189,12 @@ def value_targets(config: MuZeroConfig, experience: Any) -> jnp.ndarray:
     bootstrap = jnp.where(truncated > 0, experience.bootstrap_value[..., :-1], experience.value[..., 1:])
     lambdas = config.bootstrapping_lambda * (1.0 - truncated)
     discounts = experience.discount[..., :-1] * config.discount
-    n_step = lambda r, d, v, lam: rlax.n_step_bootstrapped_returns(r, d, v, config.num_bootstrapping, lam, stop_target_gradients=True)
-    return jax.vmap(n_step)(experience.reward[..., :-1], discounts, bootstrap, lambdas)
+    rewards = experience.reward[..., :-1]
+
+    def n_step(reward, discount, value, lam):
+        return rlax.n_step_bootstrapped_returns(reward, discount, value, config.num_bootstrapping, lam, stop_target_gradients=True)
+
+    return jax.vmap(n_step)(rewards, discounts, bootstrap, lambdas)
 
 
 def make_targets(config: MuZeroConfig, support: Support, experience: Any) -> tuple[Targets, jnp.ndarray]:
@@ -228,11 +251,12 @@ def loss(
     unroll_loss = sum(loss_weights.get(name, 1.0) * value for name, value in unroll_losses.items())
     total_loss = root_loss + unroll_loss
 
+    policy = distrax.Categorical(logits=policy_logits)
     metrics = {
         "loss": total_loss,
         "root_value_loss": root_value_loss,
         "root_policy_loss": root_policy_loss,
-        "root_policy_entropy": jnp.mean(distrax.Categorical(logits=policy_logits).entropy()),
+        "root_policy_entropy": jnp.mean(policy.entropy()),
         "root_value_pred_mean": jnp.mean(support.logits_to_scalar(value_logits)),
         "unroll_loss": unroll_loss,
         **{f"unroll_{name}_loss": value for name, value in unroll_losses.items()},
